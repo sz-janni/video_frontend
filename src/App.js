@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Stage, Layer, Rect, Transformer } from 'react-konva';
+import Select from 'react-select';
 import './App.css';
 
 function App() {
@@ -17,6 +18,33 @@ function App() {
     // New state for frame-specific boxes
     const [allBoxes, setAllBoxes] = useState({}); // Format: { frameTime: [boxes] }
     const [currentFrameTime, setCurrentFrameTime] = useState(0);
+
+    // Add tab state
+    const [activeTab, setActiveTab] = useState('annotation');
+
+    // Data selection state
+    const [selectedSubject, setSelectedSubject] = useState('');
+    const [selectedCamera, setSelectedCamera] = useState('');
+    const [videoLoaded, setVideoLoaded] = useState(false);
+
+    // Video duration state
+    const [videoDuration, setVideoDuration] = useState(0);
+
+    // Dummy values for react-select
+    const subjects = [
+        { value: 'subj1', label: 'Subject 1 - Visit A' },
+        { value: 'subj2', label: 'Subject 2 - Visit B' }
+    ];
+    const cameras = [
+        { value: 'cam1', label: 'Camera 1' },
+        { value: 'cam2', label: 'Camera 2' }
+    ];
+
+    // Handle video load button
+    const handleLoadVideo = () => {
+        setVideoLoaded(true);
+        setActiveTab('annotation');
+    };
 
     // Handle video controls separately
     const handlePlayPause = () => {
@@ -221,6 +249,27 @@ function App() {
         return () => video.removeEventListener('timeupdate', updateCurrentTime);
     }, []);
 
+    // Update video duration on load
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return;
+
+        const handleLoadedMetadata = () => {
+            setVideoDuration(Math.floor(video.duration));
+        };
+
+        video.addEventListener('loadedmetadata', handleLoadedMetadata);
+        return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    }, []);
+
+    // Handle slider change
+    const handleSliderChange = (e) => {
+        const value = Number(e.target.value);
+        if (videoRef.current) {
+            videoRef.current.currentTime = value;
+        }
+    };
+
     // Get boxes for the current frame - update to respect start and end frames
     const getCurrentBoxes = () => {
         // Collect all boxes from the start of the video up to the current frame
@@ -306,207 +355,311 @@ function App() {
 
     return (
         <div className="app">
-            <div className="toolbar">
+            {/* Tabs navigation */}
+            <div className="tab-nav">
                 <button
-                    className={mode === 'draw' ? 'active' : ''}
-                    onClick={() => {
-                        setMode('draw');
-                        setSelectedId(null);
-                    }}
+                    className={`tab-button${activeTab === 'data' ? ' active' : ''}`}
+                    onClick={() => setActiveTab('data')}
                 >
-                    Add Box
+                    Data Selection
                 </button>
                 <button
-                    className={mode === 'delete' ? 'active' : ''}
-                    onClick={() => {
-                        setMode('delete');
-                        setSelectedId(null);
-                    }}
+                    className={`tab-button${activeTab === 'annotation' ? ' active' : ''}`}
+                    onClick={() => setActiveTab('annotation')}
                 >
-                    Delete Mode
+                    Annotation
                 </button>
-
-                {/* Replace the old delete button with two specific delete buttons */}
-                <button
-                    onClick={deleteObject}
-                    disabled={!selectedId}
-                    className={!selectedId ? 'disabled' : ''}
-                >
-                    Delete Object
-                </button>
-                <button
-                    onClick={deleteOnwards}
-                    disabled={!selectedId}
-                    className={!selectedId ? 'disabled' : ''}
-                >
-                    Delete Onwards
-                </button>
-                <button onClick={handleSave}>
-                    Save
-                </button>
-
-                {/* Boxes section in toolbar with lifecycle info */}
-                <div className="boxes-section">
-                    <h3>Objects</h3>
-                    <div className="frame-info">Frame: {currentFrameTime}s</div>
-                    <div className="boxes-list">
-                        {getAllUniqueBoxes().length === 0 ? (
-                            <div className="no-boxes">No objects created yet</div>
-                        ) : (
-                            getAllUniqueBoxes().map(box => (
-                                <div
-                                    key={box.id}
-                                    className={`box-item ${selectedId === box.id ? 'selected' : ''}`}
-                                    onClick={() => selectBoxFromToolbar(box.id)}
-                                >
-                                    <div style={{ fontWeight: '600', marginBottom: '4px' }}>
-                                        {box.name}
-                                    </div>
-                                    <div style={{ fontSize: '11px', opacity: '0.8' }}>
-                                        {box.startFrame}s → {box.endFrame === null ? 'end' : `${box.endFrame}s`}
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
             </div>
-
-            <div className="video-container" ref={videoContainerRef}>
-                {/* Video without controls - we'll make our own */}
-                <video
-                    ref={videoRef}
-                    src="/assets/sample.mp4"
-                    width={videoDimensions.width}
-                    height={videoDimensions.height}
-                />
-
-                {/* Konva canvas overlay */}
-                <Stage
-                    width={videoDimensions.width}
-                    height={videoDimensions.height}
-                    onMouseDown={handleMouseDown}
-                    onMousemove={handleMouseMove}
-                    onMouseup={handleMouseUp}
-                    className="canvas-overlay"
-                    style={{ pointerEvents: 'auto' }} // Ensure we can interact with the canvas
-                >
-                    <Layer ref={layerRef}>
-                        {boxesToRender.map(box => (
-                            <Rect
-                                key={box.id}
-                                id={`box-${box.id}`}
-                                x={box.x}
-                                y={box.y}
-                                width={box.width}
-                                height={box.height}
-                                stroke={selectedId === box.id ? '#007AFF' : '#FF3B30'}
-                                strokeWidth={selectedId === box.id ? 2.5 : 2}
-                                fill="transparent"
-                                draggable={selectedId === box.id && mode !== 'delete'}
-                                onClick={(e) => handleBoxClick(e, box)}
-                                shadowColor="rgba(0, 0, 0, 0.1)"
-                                shadowBlur={selectedId === box.id ? 8 : 4}
-                                shadowOpacity={selectedId === box.id ? 0.3 : 0.2}
-                                shadowOffsetY={2}
-                                onDragEnd={(e) => {
-                                    const node = e.target;
-                                    // Update this box in the current frame
-                                    setAllBoxes(prev => {
-                                        const newBoxes = { ...prev };
-                                        if (!newBoxes[currentFrameTime]) {
-                                            newBoxes[currentFrameTime] = [];
-                                        }
-
-                                        // Update or add the box for this frame
-                                        const updatedBox = {
-                                            ...box,
-                                            x: node.x(),
-                                            y: node.y()
-                                        };
-
-                                        const boxIndex = newBoxes[currentFrameTime].findIndex(b => b.id === box.id);
-                                        if (boxIndex >= 0) {
-                                            newBoxes[currentFrameTime][boxIndex] = updatedBox;
-                                        } else {
-                                            newBoxes[currentFrameTime].push(updatedBox);
-                                        }
-
-                                        return newBoxes;
-                                    });
+            <div className="tab-content">
+                {activeTab === 'data' ? (
+                    <div className="data-selection-centered">
+                        <div className="data-selection-card">
+                            <h2 style={{ textAlign: 'center', marginBottom: 24 }}>Data Selection</h2>
+                            <div style={{ marginBottom: 24 }}>
+                                <label className="data-label">
+                                    Subject/Visit
+                                </label>
+                                <Select
+                                    options={subjects}
+                                    value={subjects.find(s => s.value === selectedSubject)}
+                                    onChange={option => setSelectedSubject(option ? option.value : '')}
+                                    placeholder="Select subject/visit..."
+                                    isClearable
+                                    classNamePrefix="rs"
+                                />
+                            </div>
+                            <div style={{ marginBottom: 24 }}>
+                                <label className="data-label">
+                                    Camera
+                                </label>
+                                <Select
+                                    options={cameras}
+                                    value={cameras.find(c => c.value === selectedCamera)}
+                                    onChange={option => setSelectedCamera(option ? option.value : '')}
+                                    placeholder="Select camera..."
+                                    isClearable
+                                    classNamePrefix="rs"
+                                />
+                            </div>
+                            <button
+                                style={{
+                                    padding: '12px 24px',
+                                    borderRadius: 12,
+                                    background: '#007aff',
+                                    color: 'white',
+                                    fontWeight: 500,
+                                    fontSize: 15,
+                                    border: 'none',
+                                    cursor: selectedSubject && selectedCamera ? 'pointer' : 'not-allowed',
+                                    opacity: selectedSubject && selectedCamera ? 1 : 0.5,
+                                    width: '100%',
+                                    marginTop: 8,
+                                    boxShadow: '0 2px 8px rgba(0,122,255,0.08)'
                                 }}
-                                onTransformEnd={(e) => {
-                                    const node = e.target;
-
-                                    // Update this box in the current frame
-                                    setAllBoxes(prev => {
-                                        const newBoxes = { ...prev };
-                                        if (!newBoxes[currentFrameTime]) {
-                                            newBoxes[currentFrameTime] = [];
-                                        }
-
-                                        // Update or add the box for this frame
-                                        const updatedBox = {
-                                            ...box,
-                                            x: node.x(),
-                                            y: node.y(),
-                                            width: node.width() * node.scaleX(),
-                                            height: node.height() * node.scaleY()
-                                        };
-
-                                        const boxIndex = newBoxes[currentFrameTime].findIndex(b => b.id === box.id);
-                                        if (boxIndex >= 0) {
-                                            newBoxes[currentFrameTime][boxIndex] = updatedBox;
-                                        } else {
-                                            newBoxes[currentFrameTime].push(updatedBox);
-                                        }
-
-                                        return newBoxes;
-                                    });
-
-                                    node.scaleX(1);
-                                    node.scaleY(1);
+                                disabled={!selectedSubject || !selectedCamera}
+                                onClick={handleLoadVideo}
+                            >
+                                Load Video
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', height: '100%' }}>
+                        <div className="toolbar">
+                            <button
+                                className={mode === 'draw' ? 'active' : ''}
+                                onClick={() => {
+                                    setMode('draw');
+                                    setSelectedId(null);
                                 }}
-                            />
-                        ))}
-
-                        {currentBox && (
-                            <Rect
-                                x={currentBox.x}
-                                y={currentBox.y}
-                                width={currentBox.width}
-                                height={currentBox.height}
-                                stroke="#007AFF"
-                                strokeWidth={2}
-                                fill="transparent"
-                                dash={[6, 3]}
-                                shadowColor="rgba(0, 122, 255, 0.2)"
-                                shadowBlur={6}
-                                shadowOpacity={0.4}
-                                shadowOffsetY={1}
-                            />
-                        )}
-
-                        {selectedId && mode !== 'delete' && (
-                            <Transformer
-                                ref={transformerRef}
-                                boundBoxFunc={(oldBox, newBox) => {
-                                    if (newBox.width < 10 || newBox.height < 10) {
-                                        return oldBox;
-                                    }
-                                    return newBox;
+                            >
+                                Add Box
+                            </button>
+                            <button
+                                className={mode === 'delete' ? 'active' : ''}
+                                onClick={() => {
+                                    setMode('delete');
+                                    setSelectedId(null);
                                 }}
-                            />
-                        )}
-                    </Layer>
-                </Stage>
+                            >
+                                Delete Mode
+                            </button>
 
-                {/* Custom video controls */}
-                <div className="video-controls">
-                    <button onClick={handlePlayPause}>Play/Pause</button>
-                    <button onClick={handleRewind}>-5s</button>
-                    <button onClick={handleForward}>+5s</button>
-                </div>
+                            {/* Replace the old delete button with two specific delete buttons */}
+                            <button
+                                onClick={deleteObject}
+                                disabled={!selectedId}
+                                className={!selectedId ? 'disabled' : ''}
+                            >
+                                Delete Object
+                            </button>
+                            <button
+                                onClick={deleteOnwards}
+                                disabled={!selectedId}
+                                className={!selectedId ? 'disabled' : ''}
+                            >
+                                Delete Onwards
+                            </button>
+                            <button onClick={handleSave}>
+                                Save
+                            </button>
+
+                            {/* Boxes section in toolbar with lifecycle info */}
+                            <div className="boxes-section">
+                                <div className="frame-info-card">
+                                    <span style={{ fontWeight: 600, fontSize: 15, color: '#007aff' }}>
+                                        Current Frame:
+                                    </span>
+                                    <span style={{ fontWeight: 500, fontSize: 15, marginLeft: 8 }}>
+                                        {currentFrameTime}s
+                                    </span>
+                                </div>
+                                <h3 style={{ margin: '18px 0 10px 0', fontSize: '16px', fontWeight: 600, color: '#1d1d1f' }}>
+                                    Objects
+                                </h3>
+                                <div className="boxes-list">
+                                    {getAllUniqueBoxes().length === 0 ? (
+                                        <div className="no-boxes">No objects created yet</div>
+                                    ) : (
+                                        getAllUniqueBoxes().map(box => (
+                                            <div
+                                                key={box.id}
+                                                className={`box-item-card${selectedId === box.id ? ' selected' : ''}`}
+                                                onClick={() => selectBoxFromToolbar(box.id)}
+                                            >
+                                                <div className="box-item-title">
+                                                    {box.name}
+                                                </div>
+                                                <div className="box-item-lifecycle">
+                                                    <span style={{ color: '#86868b' }}>
+                                                        {box.startFrame}s
+                                                    </span>
+                                                    <span style={{ margin: '0 6px', color: '#bdbdbd' }}>→</span>
+                                                    <span style={{ color: box.endFrame === null ? '#007aff' : '#86868b' }}>
+                                                        {box.endFrame === null ? 'end' : `${box.endFrame}s`}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="video-container" ref={videoContainerRef}>
+                            {/* Video without controls - we'll make our own */}
+                            <video
+                                ref={videoRef}
+                                src="/assets/sample.mp4"
+                                width={videoDimensions.width}
+                                height={videoDimensions.height}
+                            />
+
+                            {/* Konva canvas overlay */}
+                            <Stage
+                                width={videoDimensions.width}
+                                height={videoDimensions.height}
+                                onMouseDown={handleMouseDown}
+                                onMousemove={handleMouseMove}
+                                onMouseup={handleMouseUp}
+                                className="canvas-overlay"
+                                style={{ pointerEvents: 'auto' }} // Ensure we can interact with the canvas
+                            >
+                                <Layer ref={layerRef}>
+                                    {boxesToRender.map(box => (
+                                        <Rect
+                                            key={box.id}
+                                            id={`box-${box.id}`}
+                                            x={box.x}
+                                            y={box.y}
+                                            width={box.width}
+                                            height={box.height}
+                                            stroke={selectedId === box.id ? '#007AFF' : '#FF3B30'}
+                                            strokeWidth={selectedId === box.id ? 2.5 : 2}
+                                            fill="transparent"
+                                            draggable={selectedId === box.id && mode !== 'delete'}
+                                            onClick={(e) => handleBoxClick(e, box)}
+                                            shadowColor="rgba(0, 0, 0, 0.1)"
+                                            shadowBlur={selectedId === box.id ? 8 : 4}
+                                            shadowOpacity={selectedId === box.id ? 0.3 : 0.2}
+                                            shadowOffsetY={2}
+                                            onDragEnd={(e) => {
+                                                const node = e.target;
+                                                // Update this box in the current frame
+                                                setAllBoxes(prev => {
+                                                    const newBoxes = { ...prev };
+                                                    if (!newBoxes[currentFrameTime]) {
+                                                        newBoxes[currentFrameTime] = [];
+                                                    }
+
+                                                    // Update or add the box for this frame
+                                                    const updatedBox = {
+                                                        ...box,
+                                                        x: node.x(),
+                                                        y: node.y()
+                                                    };
+
+                                                    const boxIndex = newBoxes[currentFrameTime].findIndex(b => b.id === box.id);
+                                                    if (boxIndex >= 0) {
+                                                        newBoxes[currentFrameTime][boxIndex] = updatedBox;
+                                                    } else {
+                                                        newBoxes[currentFrameTime].push(updatedBox);
+                                                    }
+
+                                                    return newBoxes;
+                                                });
+                                            }}
+                                            onTransformEnd={(e) => {
+                                                const node = e.target;
+
+                                                // Update this box in the current frame
+                                                setAllBoxes(prev => {
+                                                    const newBoxes = { ...prev };
+                                                    if (!newBoxes[currentFrameTime]) {
+                                                        newBoxes[currentFrameTime] = [];
+                                                    }
+
+                                                    // Update or add the box for this frame
+                                                    const updatedBox = {
+                                                        ...box,
+                                                        x: node.x(),
+                                                        y: node.y(),
+                                                        width: node.width() * node.scaleX(),
+                                                        height: node.height() * node.scaleY()
+                                                    };
+
+                                                    const boxIndex = newBoxes[currentFrameTime].findIndex(b => b.id === box.id);
+                                                    if (boxIndex >= 0) {
+                                                        newBoxes[currentFrameTime][boxIndex] = updatedBox;
+                                                    } else {
+                                                        newBoxes[currentFrameTime].push(updatedBox);
+                                                    }
+
+                                                    return newBoxes;
+                                                });
+
+                                                node.scaleX(1);
+                                                node.scaleY(1);
+                                            }}
+                                        />
+                                    ))}
+
+                                    {currentBox && (
+                                        <Rect
+                                            x={currentBox.x}
+                                            y={currentBox.y}
+                                            width={currentBox.width}
+                                            height={currentBox.height}
+                                            stroke="#007AFF"
+                                            strokeWidth={2}
+                                            fill="transparent"
+                                            dash={[6, 3]}
+                                            shadowColor="rgba(0, 122, 255, 0.2)"
+                                            shadowBlur={6}
+                                            shadowOpacity={0.4}
+                                            shadowOffsetY={1}
+                                        />
+                                    )}
+
+                                    {selectedId && mode !== 'delete' && (
+                                        <Transformer
+                                            ref={transformerRef}
+                                            boundBoxFunc={(oldBox, newBox) => {
+                                                if (newBox.width < 10 || newBox.height < 10) {
+                                                    return oldBox;
+                                                }
+                                                return newBox;
+                                            }}
+                                        />
+                                    )}
+                                </Layer>
+                            </Stage>
+
+                            {/* Custom video controls */}
+                            <div className="video-controls">
+                                <button onClick={handlePlayPause}>Play/Pause</button>
+                                <button onClick={handleRewind}>-5s</button>
+                                <button onClick={handleForward}>+5s</button>
+                                {/* Slider for seeking */}
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={videoDuration}
+                                    value={currentFrameTime}
+                                    onChange={handleSliderChange}
+                                    style={{
+                                        marginLeft: 12,
+                                        marginRight: 12,
+                                        width: 180,
+                                        verticalAlign: 'middle'
+                                    }}
+                                />
+                                <span style={{ fontSize: 13, color: '#86868b', minWidth: 60, textAlign: 'right' }}>
+                                    {currentFrameTime}s / {videoDuration}s
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

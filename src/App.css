@@ -15,6 +15,7 @@ body {
 
 .app {
     display: flex;
+    flex-direction: column;
     height: 100vh;
     background: #f5f5f7;
 }
@@ -30,6 +31,9 @@ body {
     flex-direction: column;
     gap: 12px;
     overflow-y: auto;
+    border-radius: 18px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10);
+    margin: 24px 18px 24px 0;
 }
 
 .toolbar::-webkit-scrollbar {
@@ -83,6 +87,57 @@ body {
     cursor: not-allowed;
     transform: none !important;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Tab navigation */
+.tab-nav {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    background: rgba(255, 255, 255, 0.97);
+    margin: 0 auto 16px auto;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    border-radius: 0 0 16px 16px;
+    max-width: 900px;
+    width: 100%;
+    position: relative;
+    z-index: 10;
+}
+
+.tab-button {
+    flex: 1;
+    padding: 16px 20px;
+    border: none;
+    background: transparent;
+    color: #86868b;
+    font-weight: 500;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    border-bottom: 2px solid transparent;
+    border-radius: 0 0 12px 12px;
+    margin: 0 2px;
+}
+
+.tab-button:hover {
+    color: #1d1d1f;
+    background: rgba(0, 0, 0, 0.03);
+}
+
+.tab-button.active {
+    color: #007aff;
+    border-bottom-color: #007aff;
+    background: rgba(0, 122, 255, 0.08);
+}
+
+/* Tab content */
+.tab-content {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
 }
 
 .video-container {
@@ -152,97 +207,6 @@ body {
     background: rgba(0, 0, 0, 0.04);
 }
 
-.boxes-section {
-    margin-top: 32px;
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
-    padding-top: 24px;
-}
-
-.boxes-section h3 {
-    margin: 0 0 16px 0;
-    font-size: 17px;
-    font-weight: 600;
-    color: #1d1d1f;
-    letter-spacing: -0.02em;
-}
-
-.frame-info {
-    font-size: 13px;
-    margin-bottom: 16px;
-    color: #86868b;
-    background: rgba(0, 0, 0, 0.02);
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-weight: 500;
-    border: 1px solid rgba(0, 0, 0, 0.04);
-}
-
-.boxes-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-height: 300px;
-    overflow-y: auto;
-    padding-right: 4px;
-}
-
-.boxes-list::-webkit-scrollbar {
-    width: 4px;
-}
-
-.boxes-list::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.boxes-list::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 2px;
-}
-
-.box-item {
-    padding: 12px 16px;
-    background: white;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-    color: #1d1d1f;
-    border: 1px solid rgba(0, 0, 0, 0.06);
-    transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-.box-item:hover {
-    background: #f9f9f9;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    border-color: rgba(0, 0, 0, 0.12);
-}
-
-.box-item.selected {
-    background: #007aff;
-    color: white;
-    border-color: #007aff;
-    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25);
-    transform: translateY(-1px);
-}
-
-.box-item div:first-child {
-    font-weight: 600;
-    margin-bottom: 4px;
-    font-size: 14px;
-}
-
-.box-item div:last-child {
-    font-size: 11px;
-    opacity: 0.7;
-    font-weight: 400;
-}
-
-.box-item.selected div:last-child {
-    opacity: 0.8;
-}
-
 .no-boxes {
     font-style: normal;
     font-size: 13px;
@@ -255,11 +219,127 @@ body {
     font-weight: 400;
 }
 
+/* Data selection styles */
+.data-selection-centered {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 400px;
+}
+
+.data-selection-card {
+    background: white;
+    border-radius: 18px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10);
+    padding: 40px 32px;
+    min-width: 340px;
+    max-width: 400px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.data-label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    font-size: 15px;
+    color: #1d1d1f;
+}
+
+/* react-select overrides */
+.rs__control {
+    border-radius: 10px !important;
+    border-color: #e5e5ea !important;
+    min-height: 44px !important;
+    font-size: 15px;
+    box-shadow: none !important;
+}
+
+.rs__control--is-focused {
+    border-color: #007aff !important;
+    box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.08) !important;
+}
+
+.rs__option {
+    font-size: 15px;
+}
+
+.rs__single-value,
+.rs__placeholder {
+    font-size: 15px;
+    color: #86868b;
+}
+
+.rs__menu {
+    border-radius: 10px !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08) !important;
+    font-size: 15px;
+}
+
+/* Improved Objects section styles */
+.boxes-section {
+    margin-top: 12px;
+}
+
+.frame-info-card {
+    background: #f5faff;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.06);
+    border: 1px solid #e5e5ea;
+}
+
+.boxes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.box-item-card {
+    background: #fff;
+    border-radius: 10px;
+    border: 1.5px solid #e5e5ea;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.box-item-card.selected {
+    border-color: #007aff;
+    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.10);
+    background: #f5faff;
+}
+
+.box-item-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: #1d1d1f;
+    margin-bottom: 2px;
+}
+
+.box-item-lifecycle {
+    font-size: 13px;
+    color: #86868b;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .toolbar {
         width: 240px;
-        padding: 20px;
     }
 
     .video-container {
@@ -269,5 +349,14 @@ body {
     .video-container video {
         max-width: calc(100% - 40px);
         max-height: calc(100% - 100px);
+    }
+
+    .tab-button {
+        font-size: 13px;
+        padding: 14px 16px;
+    }
+
+    .tab-content {
+        padding: 20px;
     }
 }
