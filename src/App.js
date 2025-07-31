@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Stage, Layer, Rect, Transformer } from 'react-konva';
 import Select from 'react-select';
 import './App.css';
+import Toolbar from './Toolbar';
+import DataSelection from './DataSelection';
+import VideoControls from './VideoControls';
 
 function App() {
     const [mode, setMode] = useState('draw');
@@ -372,139 +375,29 @@ function App() {
             </div>
             <div className="tab-content">
                 {activeTab === 'data' ? (
-                    <div className="data-selection-centered">
-                        <div className="data-selection-card">
-                            <h2 style={{ textAlign: 'center', marginBottom: 24 }}>Data Selection</h2>
-                            <div style={{ marginBottom: 24 }}>
-                                <label className="data-label">
-                                    Subject/Visit
-                                </label>
-                                <Select
-                                    options={subjects}
-                                    value={subjects.find(s => s.value === selectedSubject)}
-                                    onChange={option => setSelectedSubject(option ? option.value : '')}
-                                    placeholder="Select subject/visit..."
-                                    isClearable
-                                    classNamePrefix="rs"
-                                />
-                            </div>
-                            <div style={{ marginBottom: 24 }}>
-                                <label className="data-label">
-                                    Camera
-                                </label>
-                                <Select
-                                    options={cameras}
-                                    value={cameras.find(c => c.value === selectedCamera)}
-                                    onChange={option => setSelectedCamera(option ? option.value : '')}
-                                    placeholder="Select camera..."
-                                    isClearable
-                                    classNamePrefix="rs"
-                                />
-                            </div>
-                            <button
-                                style={{
-                                    padding: '12px 24px',
-                                    borderRadius: 12,
-                                    background: '#007aff',
-                                    color: 'white',
-                                    fontWeight: 500,
-                                    fontSize: 15,
-                                    border: 'none',
-                                    cursor: selectedSubject && selectedCamera ? 'pointer' : 'not-allowed',
-                                    opacity: selectedSubject && selectedCamera ? 1 : 0.5,
-                                    width: '100%',
-                                    marginTop: 8,
-                                    boxShadow: '0 2px 8px rgba(0,122,255,0.08)'
-                                }}
-                                disabled={!selectedSubject || !selectedCamera}
-                                onClick={handleLoadVideo}
-                            >
-                                Load Video
-                            </button>
-                        </div>
-                    </div>
+                    <DataSelection
+                        subjects={subjects}
+                        cameras={cameras}
+                        selectedSubject={selectedSubject}
+                        setSelectedSubject={setSelectedSubject}
+                        selectedCamera={selectedCamera}
+                        setSelectedCamera={setSelectedCamera}
+                        handleLoadVideo={handleLoadVideo}
+                    />
                 ) : (
                     <div style={{ display: 'flex', height: '100%' }}>
-                        <div className="toolbar">
-                            <button
-                                className={mode === 'draw' ? 'active' : ''}
-                                onClick={() => {
-                                    setMode('draw');
-                                    setSelectedId(null);
-                                }}
-                            >
-                                Add Box
-                            </button>
-                            <button
-                                className={mode === 'delete' ? 'active' : ''}
-                                onClick={() => {
-                                    setMode('delete');
-                                    setSelectedId(null);
-                                }}
-                            >
-                                Delete Mode
-                            </button>
-
-                            {/* Replace the old delete button with two specific delete buttons */}
-                            <button
-                                onClick={deleteObject}
-                                disabled={!selectedId}
-                                className={!selectedId ? 'disabled' : ''}
-                            >
-                                Delete Object
-                            </button>
-                            <button
-                                onClick={deleteOnwards}
-                                disabled={!selectedId}
-                                className={!selectedId ? 'disabled' : ''}
-                            >
-                                Delete Onwards
-                            </button>
-                            <button onClick={handleSave}>
-                                Save
-                            </button>
-
-                            {/* Boxes section in toolbar with lifecycle info */}
-                            <div className="boxes-section">
-                                <div className="frame-info-card">
-                                    <span style={{ fontWeight: 600, fontSize: 15, color: '#007aff' }}>
-                                        Current Frame:
-                                    </span>
-                                    <span style={{ fontWeight: 500, fontSize: 15, marginLeft: 8 }}>
-                                        {currentFrameTime}s
-                                    </span>
-                                </div>
-                                <h3 style={{ margin: '18px 0 10px 0', fontSize: '16px', fontWeight: 600, color: '#1d1d1f' }}>
-                                    Objects
-                                </h3>
-                                <div className="boxes-list">
-                                    {getAllUniqueBoxes().length === 0 ? (
-                                        <div className="no-boxes">No objects created yet</div>
-                                    ) : (
-                                        getAllUniqueBoxes().map(box => (
-                                            <div
-                                                key={box.id}
-                                                className={`box-item-card${selectedId === box.id ? ' selected' : ''}`}
-                                                onClick={() => selectBoxFromToolbar(box.id)}
-                                            >
-                                                <div className="box-item-title">
-                                                    {box.name}
-                                                </div>
-                                                <div className="box-item-lifecycle">
-                                                    <span style={{ color: '#86868b' }}>
-                                                        {box.startFrame}s
-                                                    </span>
-                                                    <span style={{ margin: '0 6px', color: '#bdbdbd' }}>→</span>
-                                                    <span style={{ color: box.endFrame === null ? '#007aff' : '#86868b' }}>
-                                                        {box.endFrame === null ? 'end' : `${box.endFrame}s`}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
+                        <Toolbar
+                            mode={mode}
+                            setMode={setMode}
+                            setSelectedId={setSelectedId}
+                            selectedId={selectedId}
+                            deleteObject={deleteObject}
+                            deleteOnwards={deleteOnwards}
+                            handleSave={handleSave}
+                            getAllUniqueBoxes={getAllUniqueBoxes}
+                            selectBoxFromToolbar={selectBoxFromToolbar}
+                            currentFrameTime={currentFrameTime}
+                        />
                         <div className="video-container" ref={videoContainerRef}>
                             {/* Video without controls - we'll make our own */}
                             <video
@@ -522,7 +415,7 @@ function App() {
                                 onMousemove={handleMouseMove}
                                 onMouseup={handleMouseUp}
                                 className="canvas-overlay"
-                                style={{ pointerEvents: 'auto' }} // Ensure we can interact with the canvas
+                                style={{ pointerEvents: 'auto' }}
                             >
                                 <Layer ref={layerRef}>
                                     {boxesToRender.map(box => (
@@ -634,29 +527,14 @@ function App() {
                                 </Layer>
                             </Stage>
 
-                            {/* Custom video controls */}
-                            <div className="video-controls">
-                                <button onClick={handlePlayPause}>Play/Pause</button>
-                                <button onClick={handleRewind}>-5s</button>
-                                <button onClick={handleForward}>+5s</button>
-                                {/* Slider for seeking */}
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={videoDuration}
-                                    value={currentFrameTime}
-                                    onChange={handleSliderChange}
-                                    style={{
-                                        marginLeft: 12,
-                                        marginRight: 12,
-                                        width: 180,
-                                        verticalAlign: 'middle'
-                                    }}
-                                />
-                                <span style={{ fontSize: 13, color: '#86868b', minWidth: 60, textAlign: 'right' }}>
-                                    {currentFrameTime}s / {videoDuration}s
-                                </span>
-                            </div>
+                            <VideoControls
+                                handlePlayPause={handlePlayPause}
+                                handleRewind={handleRewind}
+                                handleForward={handleForward}
+                                handleSliderChange={handleSliderChange}
+                                currentFrameTime={currentFrameTime}
+                                videoDuration={videoDuration}
+                            />
                         </div>
                     </div>
                 )}
