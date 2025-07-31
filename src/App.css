@@ -255,7 +255,6 @@ body {
     font-weight: 400;
 }
 
-/* Responsive design */
 @media (max-width: 768px) {
     .toolbar {
         width: 240px;
