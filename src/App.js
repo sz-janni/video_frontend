@@ -65,36 +65,23 @@ function App() {
 
     const browseForVideo = async () => {
         setDataSelectionStatus({ type: 'idle', text: '' });
-        if (!(typeof window !== 'undefined' && window.require)) {
-            setDataSelectionStatus({ type: 'error', text: 'Video browsing requires the desktop application.' });
+
+        const openFileDialog = window.electronAPI?.openFileDialog;
+        if (!openFileDialog) {
+            setDataSelectionStatus({ type: 'error', text: 'Desktop integration unavailable.' });
             return;
         }
+
         try {
-            const electron = window.require('electron');
-            const dialog = electron?.remote?.dialog || electron?.dialog;
-            const filters = [{ name: 'MP4 video', extensions: ['mp4'] }];
-            if (dialog?.showOpenDialog) {
-                const result = await dialog.showOpenDialog({
-                    title: 'Select video',
-                    properties: ['openFile'],
-                    filters
-                });
-                if (!result?.canceled && result?.filePaths?.length) {
-                    setSelectedVideo(result.filePaths[0]);
-                }
-                return;
+            const result = await openFileDialog({
+                title: 'Select video',
+                properties: ['openFile'],
+                filters: [{ name: 'MP4 video', extensions: ['mp4'] }]
+            });
+
+            if (!result?.canceled && result?.filePaths?.length) {
+                setSelectedVideo(result.filePaths[0]);
             }
-            if (electron?.ipcRenderer?.invoke) {
-                const response = await electron.ipcRenderer.invoke('select-video-file', { filters });
-                const filePath = typeof response === 'string'
-                    ? response
-                    : response?.filePaths?.[0];
-                if (filePath) {
-                    setSelectedVideo(filePath);
-                    return;
-                }
-            }
-            setDataSelectionStatus({ type: 'error', text: 'Video picker unavailable. Enter the path manually.' });
         } catch (error) {
             console.error('Video picker error', error);
             setDataSelectionStatus({ type: 'error', text: error.message || 'Unable to open video picker.' });
@@ -126,20 +113,10 @@ function App() {
             setDataSelectionStatus({ type: 'error', text: 'Select a video first.' });
             return;
         }
-        if (!(typeof window !== 'undefined' && window.require)) {
-            setDataSelectionStatus({ type: 'error', text: 'Local file access requires the desktop application.' });
-            return;
-        }
 
-        const fs = window.require('fs');
-        const pathModule = window.require('path');
-
-        if (!fs?.existsSync || !pathModule) {
-            setDataSelectionStatus({ type: 'error', text: 'File system bridge unavailable in this environment.' });
-            return;
-        }
-        if (!fs.existsSync(videoPath)) {
-            setDataSelectionStatus({ type: 'error', text: 'Selected video not found on disk.' });
+        const loadVideoResource = window.electronAPI?.loadVideoResource;
+        if (!loadVideoResource) {
+            setDataSelectionStatus({ type: 'error', text: 'Desktop integration unavailable.' });
             return;
         }
 
@@ -147,6 +124,7 @@ function App() {
         if (videoRef.current) {
             videoRef.current.pause();
         }
+
         setVideoLoaded(false);
         setIsPlaying(false);
         setVideoSource(null);
@@ -154,41 +132,29 @@ function App() {
         setSelectedId(null);
         setCurrentFrameTime(0);
 
-        const jsonPath = pathModule.join(
-            pathModule.dirname(videoPath),
-            `${pathModule.basename(videoPath, pathModule.extname(videoPath))}.json`
-        );
+        try {
+            const response = await loadVideoResource(videoPath);
 
-        let annotationsLoaded = false;
-        let framesPayload = {};
-
-        if (fs.promises) {
-            try {
-                const rawJson = await fs.promises.readFile(jsonPath, 'utf8');
-                const parsed = JSON.parse(rawJson);
-                const frames = parsed?.frames && typeof parsed.frames === 'object' ? parsed.frames : parsed;
-                if (frames && typeof frames === 'object') {
-                    framesPayload = frames;
-                    annotationsLoaded = Object.keys(framesPayload).length > 0;
-                }
-            } catch (error) {
-                if (error.code !== 'ENOENT') {
-                    console.error('Unable to load annotation JSON', error);
-                    setVideoSource(resolveVideoSource(videoPath));
-                    setActiveTab('annotation');
-                    setDataSelectionStatus({ type: 'error', text: error.message || 'Failed to load annotations.' });
-                    return;
-                }
+            if (!response?.ok) {
+                setDataSelectionStatus({ type: 'error', text: response?.error || 'Failed to load video.' });
+                return;
             }
-        }
 
-        setAllBoxes(annotationsLoaded ? transformModelAnnotations(framesPayload) : {});
-        setVideoSource(resolveVideoSource(videoPath));
-        setActiveTab('annotation');
-        setDataSelectionStatus({
-            type: 'success',
-            text: annotationsLoaded ? 'Video and annotations loaded.' : 'Video loaded without annotations.'
-        });
+            const annotations = response.annotations && typeof response.annotations === 'object'
+                ? transformModelAnnotations(response.annotations)
+                : {};
+
+            setAllBoxes(annotations);
+            setVideoSource(response.videoUrl || resolveVideoSource(videoPath));
+            setActiveTab('annotation');
+            setDataSelectionStatus({
+                type: 'success',
+                text: response.message || 'Video loaded.'
+            });
+        } catch (error) {
+            console.error('Video load error', error);
+            setDataSelectionStatus({ type: 'error', text: error.message || 'Failed to load video.' });
+        }
     };
 
     // Handle video controls separately

@@ -2,6 +2,7 @@
     "name": "video-box-drawer",
     "version": "0.1.0",
     "private": true,
+    "homepage": ".",
     "dependencies": {
         "@testing-library/jest-dom": "^5.16.4",
         "@testing-library/react": "^13.3.0",
@@ -15,7 +16,7 @@
         "web-vitals": "^2.1.4"
     },
     "scripts": {
-        "start": "react-scripts start",
+        "start": "electron .",
         "build": "react-scripts build",
         "test": "react-scripts test",
         "eject": "react-scripts eject",
@@ -42,7 +43,7 @@
     },
     "main": "electron.js",
     "devDependencies": {
-        "electron": "^28.3.1",
+        "electron": "^28.3.3",
         "electron-builder": "^24.13.3"
     },
     "build": {
@@ -50,7 +51,9 @@
         "productName": "Video Box Drawer",
         "files": [
             "build/**/*",
-            "electron.js"
+            "electron.js",
+            "preload.js",
+            "test.ps1"
         ],
         "directories": {
             "output": "dist"

@@ -29,24 +29,22 @@ function AITools({ }) {
 
     useEffect(() => {
         let isMounted = true;
-        const computeFolderStats = async () => {
+        const fetchStats = async () => {
             const trimmed = inputFolder.trim();
-            if (!trimmed || !(typeof window !== 'undefined' && window.require)) {
+            if (!trimmed) {
                 if (isMounted) {
                     setInputStats({ videos: 0, annotations: 0, error: null, loading: false });
                 }
                 return;
             }
 
-            const fs = window.require('fs');
-            const path = window.require('path');
-
-            if (!fs?.promises || !path) {
+            const getFolderStats = window.electronAPI?.getFolderStats;
+            if (!getFolderStats) {
                 if (isMounted) {
                     setInputStats({
                         videos: 0,
                         annotations: 0,
-                        error: 'File system access unavailable in this environment.',
+                        error: 'Folder statistics unavailable in this environment.',
                         loading: false
                     });
                 }
@@ -58,20 +56,25 @@ function AITools({ }) {
             }
 
             try {
-                const entries = await fs.promises.readdir(trimmed);
-                const counts = entries.reduce(
-                    (acc, entry) => {
-                        const ext = path.extname(entry).toLowerCase();
-                        if (ext === '.mp4') acc.videos += 1;
-                        if (ext === '.json') acc.annotations += 1;
-                        return acc;
-                    },
-                    { videos: 0, annotations: 0 }
-                );
+                const response = await getFolderStats(trimmed);
+                if (!isMounted) return;
 
-                if (isMounted) {
-                    setInputStats({ ...counts, error: null, loading: false });
+                if (!response?.ok) {
+                    setInputStats({
+                        videos: 0,
+                        annotations: 0,
+                        error: response?.error || 'Unable to read input folder.',
+                        loading: false
+                    });
+                    return;
                 }
+
+                setInputStats({
+                    videos: response.videos ?? 0,
+                    annotations: response.annotations ?? 0,
+                    error: null,
+                    loading: false
+                });
             } catch (error) {
                 if (isMounted) {
                     setInputStats({
@@ -84,7 +87,7 @@ function AITools({ }) {
             }
         };
 
-        computeFolderStats();
+        fetchStats();
         return () => {
             isMounted = false;
         };
@@ -99,29 +102,38 @@ function AITools({ }) {
             return;
         }
 
+        const runAIPipeline = window.electronAPI?.runAIPipeline;
+        if (!runAIPipeline) {
+            setStatus({ type: 'error', message: 'AI execution unavailable in this environment.' });
+            return;
+        }
+
         setIsRunning(true);
-        setStatus({ type: 'pending', message: 'Running AI pipeline. This may take a moment…' });
+        setStatus({ type: 'pending', message: 'Opening PowerShell…' });
 
         try {
-            const result = await handleRunAI(
-                trimmedInput,
-                trimmedOutput,
+            const response = await runAIPipeline({
+                inputFolder: trimmedInput,
+                outputFolder: trimmedOutput,
                 environment,
                 pipeline,
                 outputType,
                 videoMasking,
                 redactionLevel
-            );
+            });
 
-            const stdout = result.stdout?.trim();
+            if (!response?.ok) {
+                throw new Error(response?.error || 'Unable to start PowerShell.');
+            }
+
             setStatus({
                 type: 'success',
-                message: stdout ? `AI completed: ${stdout}` : 'AI process finished successfully.'
+                message: 'Aquarius runner launched.'
             });
         } catch (error) {
             setStatus({
                 type: 'error',
-                message: error.message || 'AI process failed. Check the console for details.'
+                message: error.message || 'Failed to launch Aquarius runner.'
             });
         } finally {
             setIsRunning(false);
@@ -134,38 +146,39 @@ function AITools({ }) {
 
     const browseForFolder = async (setter, label) => {
         resetStatus();
-        if (!(typeof window !== 'undefined' && window.require)) {
-            setStatus({ type: 'error', message: 'Directory browsing requires the desktop application.' });
+        const openFileDialog = window.electronAPI?.openFileDialog;
+        if (!openFileDialog) {
+            setStatus({ type: 'error', message: 'Desktop integration unavailable.' });
             return;
         }
         try {
-            const electron = window.require('electron');
-            const dialog = electron?.remote?.dialog || electron?.dialog;
-            if (dialog?.showOpenDialog) {
-                const result = await dialog.showOpenDialog({
-                    title: label,
-                    properties: ['openDirectory', 'createDirectory']
-                });
-                if (!result?.canceled && result?.filePaths?.length) {
-                    setter(result.filePaths[0]);
-                }
-                return;
+            const result = await openFileDialog({
+                title: label,
+                properties: ['openDirectory', 'createDirectory']
+            });
+            if (!result?.canceled && result?.filePaths?.length) {
+                setter(result.filePaths[0]);
             }
-            if (electron?.ipcRenderer?.invoke) {
-                const response = await electron.ipcRenderer.invoke('select-directory', { title: label });
-                if (typeof response === 'string' && response) {
-                    setter(response);
-                    return;
-                }
-                if (response?.filePaths?.length) {
-                    setter(response.filePaths[0]);
-                    return;
-                }
-            }
-            setStatus({ type: 'error', message: 'Directory picker unavailable. Enter the path manually.' });
         } catch (error) {
             console.error('Directory picker error', error);
             setStatus({ type: 'error', message: error.message || 'Unable to open directory picker.' });
+        }
+    };
+
+    const openDialog = async (options, onSuccess) => {
+        const openFileDialog = window.electronAPI?.openFileDialog;
+        if (!openFileDialog) {
+            setStatus({ type: 'error', message: 'Desktop integration unavailable.' });
+            return;
+        }
+        try {
+            const result = await openFileDialog(options);
+            if (!result?.canceled && result?.filePaths?.length) {
+                onSuccess(result.filePaths[0]);
+            }
+        } catch (error) {
+            console.error('AI Tools browse error', error);
+            setStatus({ type: 'error', message: error.message || 'Unable to open file picker.' });
         }
     };
 
@@ -231,8 +244,14 @@ function AITools({ }) {
                         <span className="ai-tools-pill ai-tools-pill--warning">{inputStats.error}</span>
                     ) : (
                         <>
-                            <span className="ai-tools-pill">{inputStats.videos} videos</span>
-                            <span className="ai-tools-pill">{inputStats.annotations} JSON annotations</span>
+                            <div className="ai-tools-metric">
+                                <span className="ai-tools-metric__value">{inputStats.videos}</span>
+                                <span className="ai-tools-metric__label">Videos</span>
+                            </div>
+                            <div className="ai-tools-metric">
+                                <span className="ai-tools-metric__value">{inputStats.annotations}</span>
+                                <span className="ai-tools-metric__label">JSON annotations</span>
+                            </div>
                         </>
                     )}
                 </div>
@@ -330,30 +349,9 @@ function AITools({ }) {
     );
 }
 
-function handleRunAI(inputFolder, outputFolder, environment, pipeline, outputType, videoMasking, redactionLevel) {
-    if (!(typeof window !== 'undefined' && window.require)) {
-        const warning = 'child_process module unavailable in this environment.';
-        console.warn(warning);
-        return Promise.resolve({ stdout: '', stderr: warning });
-    }
-
-    const { exec } = window.require('child_process');
-    const command = `powershell -ExecutionPolicy Bypass -File ./sample_script.ps1 -InputFolder "${inputFolder}" -OutputFolder "${outputFolder}" -Environment "${environment}" -Pipeline "${pipeline}" -OutputType "${outputType}" -VideoMasking "${videoMasking}" -RedactionLevel "${redactionLevel}"`;
-
-    return new Promise((resolve, reject) => {
-        exec(command, (error, stdout, stderr) => {
-            if (error) {
-                console.error(`Error executing AI tool: ${error.message}`);
-                reject(error);
-                return;
-            }
-            if (stderr) {
-                console.error(`AI tool stderr: ${stderr}`);
-            }
-            console.log(`AI tool output: ${stdout}`);
-            resolve({ stdout, stderr });
-        });
-    });
+function handleRunAI(/* ...unused... */) {
+    const warning = 'handleRunAI is handled via runAIPipeline bridge.';
+    console.warn(warning);
+    return Promise.resolve({ stdout: '', stderr: warning });
 }
-
 export default AITools;
