@@ -32,3 +32,31 @@ npm start
 3. Drag corners to resize, drag center to move
 4. Use "Delete Selected" to remove boxes
 5. Click "Save" to log coordinates to console
+
+## Electron usage
+
+### Preview in Electron
+1. Build the React frontend:
+```bash
+npm run build
+```
+2. Launch the Electron shell:
+```bash
+npm run electron:serve
+```
+
+### Live reload during development
+1. Start the React dev server:
+```bash
+npm start
+```
+2. In another terminal (Windows example), point Electron at the dev URL:
+```bash
+set ELECTRON_START_URL=http://localhost:3000 && electron .
+```
+
+### Windows installer
+Generate an installer into `dist/`:
+```bash
+npm run electron:build
+```

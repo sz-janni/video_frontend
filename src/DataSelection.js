@@ -1,45 +1,44 @@
 import React from 'react';
-import Select from 'react-select';
 
 function DataSelection({
-    subjects,
-    cameras,
-    selectedSubject,
-    setSelectedSubject,
-    selectedCamera,
-    setSelectedCamera,
-    handleLoadVideo
+    selectedVideo,
+    onBrowseVideo,
+    onChangeVideoInput,
+    handleLoadVideo,
+    status
 }) {
+    const isLoading = status?.type === 'pending';
+
     return (
         <div className="data-selection-centered">
             <div className="data-selection-card">
                 <h2 style={{ textAlign: 'center', marginBottom: 24 }}>Data Selection</h2>
                 <div style={{ marginBottom: 24 }}>
                     <label className="data-label">
-                        Subject/Visit
+                        Video file (.mp4)
                     </label>
-                    <Select
-                        options={subjects}
-                        value={subjects.find(s => s.value === selectedSubject)}
-                        onChange={option => setSelectedSubject(option ? option.value : '')}
-                        placeholder="Select subject/visit..."
-                        isClearable
-                        classNamePrefix="rs"
-                    />
+                    <div className="ai-tools-input-group">
+                        <input
+                            className="ai-tools-input"
+                            placeholder="Browse to an .mp4 video"
+                            value={selectedVideo}
+                            onChange={(event) => onChangeVideoInput(event.target.value)}
+                        />
+                        <button
+                            type="button"
+                            className="ai-tools-browse"
+                            onClick={onBrowseVideo}
+                            disabled={isLoading}
+                        >
+                            Browse
+                        </button>
+                    </div>
                 </div>
-                <div style={{ marginBottom: 24 }}>
-                    <label className="data-label">
-                        Camera
-                    </label>
-                    <Select
-                        options={cameras}
-                        value={cameras.find(c => c.value === selectedCamera)}
-                        onChange={option => setSelectedCamera(option ? option.value : '')}
-                        placeholder="Select camera..."
-                        isClearable
-                        classNamePrefix="rs"
-                    />
-                </div>
+                {status?.text && status.type !== 'idle' && (
+                    <div className={`ai-tools-status ai-tools-status--${status.type}`} style={{ width: '100%' }}>
+                        {status.text}
+                    </div>
+                )}
                 <button
                     style={{
                         padding: '12px 24px',
@@ -49,16 +48,16 @@ function DataSelection({
                         fontWeight: 500,
                         fontSize: 15,
                         border: 'none',
-                        cursor: selectedSubject && selectedCamera ? 'pointer' : 'not-allowed',
-                        opacity: selectedSubject && selectedCamera ? 1 : 0.5,
+                        cursor: (!selectedVideo || isLoading) ? 'not-allowed' : 'pointer',
+                        opacity: (!selectedVideo || isLoading) ? 0.5 : 1,
                         width: '100%',
-                        marginTop: 8,
+                        marginTop: 16,
                         boxShadow: '0 2px 8px rgba(0,122,255,0.08)'
                     }}
-                    disabled={!selectedSubject || !selectedCamera}
+                    disabled={!selectedVideo || isLoading}
                     onClick={handleLoadVideo}
                 >
-                    Load Video
+                    {isLoading ? 'Loading…' : 'Load Video'}
                 </button>
             </div>
         </div>

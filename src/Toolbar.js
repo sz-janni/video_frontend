@@ -15,13 +15,19 @@ function Toolbar({
     return (
         <div className="toolbar">
             <button
-                className={mode === 'draw' ? 'active' : ''}
+                className={mode === 'add' ? 'active' : ''}
                 onClick={() => {
-                    setMode('draw');
+                    setMode('add');
                     setSelectedId(null);
                 }}
             >
-                Add Box
+                Add Mode
+            </button>
+            <button
+                className={mode === 'edit' ? 'active' : ''}
+                onClick={() => setMode('edit')}
+            >
+                Edit Mode
             </button>
             <button
                 className={mode === 'delete' ? 'active' : ''}
@@ -65,26 +71,34 @@ function Toolbar({
                     {getAllUniqueBoxes().length === 0 ? (
                         <div className="no-boxes">No objects created yet</div>
                     ) : (
-                        getAllUniqueBoxes().map(box => (
-                            <div
-                                key={box.id}
-                                className={`box-item-card${selectedId === box.id ? ' selected' : ''}`}
-                                onClick={() => selectBoxFromToolbar(box.id)}
-                            >
-                                <div className="box-item-title">
-                                    {box.name}
+                        getAllUniqueBoxes().map(box => {
+                            const isSelected = selectedId === box.id;
+                            const isDisabled = mode !== 'edit';
+                            return (
+                                <div
+                                    key={box.id}
+                                    className={`box-item-card${isSelected ? ' selected' : ''}${isDisabled ? ' disabled' : ''}`}
+                                    onClick={() => {
+                                        if (mode === 'edit') {
+                                            selectBoxFromToolbar(box.id);
+                                        }
+                                    }}
+                                >
+                                    <div className="box-item-title">
+                                        {box.name}
+                                    </div>
+                                    <div className="box-item-lifecycle">
+                                        <span style={{ color: '#86868b' }}>
+                                            {box.startFrame}s
+                                        </span>
+                                        <span style={{ margin: '0 6px', color: '#bdbdbd' }}>→</span>
+                                        <span style={{ color: box.endFrame === null ? '#007aff' : '#86868b' }}>
+                                            {box.endFrame === null ? 'end' : `${box.endFrame}s`}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="box-item-lifecycle">
-                                    <span style={{ color: '#86868b' }}>
-                                        {box.startFrame}s
-                                    </span>
-                                    <span style={{ margin: '0 6px', color: '#bdbdbd' }}>→</span>
-                                    <span style={{ color: box.endFrame === null ? '#007aff' : '#86868b' }}>
-                                        {box.endFrame === null ? 'end' : `${box.endFrame}s`}
-                                    </span>
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </div>

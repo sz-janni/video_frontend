@@ -18,7 +18,9 @@
         "start": "react-scripts start",
         "build": "react-scripts build",
         "test": "react-scripts test",
-        "eject": "react-scripts eject"
+        "eject": "react-scripts eject",
+        "electron:serve": "npm run build && electron .",
+        "electron:build": "npm run build && electron-builder --win"
     },
     "eslintConfig": {
         "extends": [
@@ -37,5 +39,28 @@
             "last 1 firefox version",
             "last 1 safari version"
         ]
+    },
+    "main": "electron.js",
+    "devDependencies": {
+        "electron": "^28.3.1",
+        "electron-builder": "^24.13.3"
+    },
+    "build": {
+        "appId": "com.videotest.boxdrawer",
+        "productName": "Video Box Drawer",
+        "files": [
+            "build/**/*",
+            "electron.js"
+        ],
+        "directories": {
+            "output": "dist"
+        },
+        "extraMetadata": {
+            "main": "electron.js"
+        },
+        "win": {
+            "target": "portable",
+            "icon": "public/favicon.ico"
+        }
     }
 }

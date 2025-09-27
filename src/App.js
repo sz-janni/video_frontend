@@ -1,13 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Stage, Layer, Rect, Transformer } from 'react-konva';
-import Select from 'react-select';
+import VideoControls from './VideoControls';
+import AITools from './AITools';
 import './App.css';
 import Toolbar from './Toolbar';
 import DataSelection from './DataSelection';
-import VideoControls from './VideoControls';
+
+const transformModelAnnotations = (frames = {}) => {
+    const formatted = {};
+    Object.entries(frames).forEach(([frameKey, frameBoxes]) => {
+        const frameTime = Number(frameKey);
+        if (Number.isNaN(frameTime) || !Array.isArray(frameBoxes)) {
+            return;
+        }
+        formatted[frameTime] = frameBoxes.map((box, index) => {
+            const rawEnd = box.endFrame;
+            const endFrame = rawEnd === undefined || rawEnd === null ? null : Number(rawEnd);
+            return {
+                id: box.id || `model-${frameTime}-${index}`,
+                name: box.class ? `${box.class}${box.id ? ` (${box.id})` : ''}` : (box.id || `Box ${index + 1}`),
+                x: box.x,
+                y: box.y,
+                width: box.width,
+                height: box.height,
+                startFrame: box.startFrame !== undefined ? Number(box.startFrame) : frameTime,
+                endFrame
+            };
+        });
+    });
+    return formatted;
+};
 
 function App() {
-    const [mode, setMode] = useState('draw');
+    const [mode, setMode] = useState('add');
     const [boxes, setBoxes] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
     const [isDrawing, setIsDrawing] = useState(false);
@@ -26,56 +51,180 @@ function App() {
     const [activeTab, setActiveTab] = useState('annotation');
 
     // Data selection state
-    const [selectedSubject, setSelectedSubject] = useState('');
-    const [selectedCamera, setSelectedCamera] = useState('');
+    const [selectedVideo, setSelectedVideo] = useState('');
+    const [dataSelectionStatus, setDataSelectionStatus] = useState({ type: 'idle', text: '' });
     const [videoLoaded, setVideoLoaded] = useState(false);
-
-    // Video duration state
     const [videoDuration, setVideoDuration] = useState(0);
+    const [videoSource, setVideoSource] = useState(null);
+    const [isPlaying, setIsPlaying] = useState(false);
 
-    // Dummy values for react-select
-    const subjects = [
-        { value: 'subj1', label: 'Subject 1 - Visit A' },
-        { value: 'subj2', label: 'Subject 2 - Visit B' }
-    ];
-    const cameras = [
-        { value: 'cam1', label: 'Camera 1' },
-        { value: 'cam2', label: 'Camera 2' }
-    ];
+    const handleVideoInputChange = (value) => {
+        setSelectedVideo(value);
+        setDataSelectionStatus({ type: 'idle', text: '' });
+    };
+
+    const browseForVideo = async () => {
+        setDataSelectionStatus({ type: 'idle', text: '' });
+        if (!(typeof window !== 'undefined' && window.require)) {
+            setDataSelectionStatus({ type: 'error', text: 'Video browsing requires the desktop application.' });
+            return;
+        }
+        try {
+            const electron = window.require('electron');
+            const dialog = electron?.remote?.dialog || electron?.dialog;
+            const filters = [{ name: 'MP4 video', extensions: ['mp4'] }];
+            if (dialog?.showOpenDialog) {
+                const result = await dialog.showOpenDialog({
+                    title: 'Select video',
+                    properties: ['openFile'],
+                    filters
+                });
+                if (!result?.canceled && result?.filePaths?.length) {
+                    setSelectedVideo(result.filePaths[0]);
+                }
+                return;
+            }
+            if (electron?.ipcRenderer?.invoke) {
+                const response = await electron.ipcRenderer.invoke('select-video-file', { filters });
+                const filePath = typeof response === 'string'
+                    ? response
+                    : response?.filePaths?.[0];
+                if (filePath) {
+                    setSelectedVideo(filePath);
+                    return;
+                }
+            }
+            setDataSelectionStatus({ type: 'error', text: 'Video picker unavailable. Enter the path manually.' });
+        } catch (error) {
+            console.error('Video picker error', error);
+            setDataSelectionStatus({ type: 'error', text: error.message || 'Unable to open video picker.' });
+        }
+    };
+
+    const resolveVideoSource = (filePath) => {
+        if (!filePath) return '';
+        try {
+            if (typeof window !== 'undefined' && window.require) {
+                const { pathToFileURL } = window.require('url');
+                if (typeof pathToFileURL === 'function') {
+                    return pathToFileURL(filePath).href;
+                }
+            }
+        } catch (error) {
+            console.warn('Unable to convert path to file URL', error);
+        }
+        const normalized = filePath.replace(/\\/g, '/');
+        return normalized.startsWith('file://')
+            ? normalized
+            : `file://${normalized.startsWith('/') ? normalized : `/${normalized}`}`;
+    };
 
     // Handle video load button
-    const handleLoadVideo = () => {
-        setVideoLoaded(true);
+    const handleLoadVideo = async () => {
+        const videoPath = selectedVideo.trim();
+        if (!videoPath) {
+            setDataSelectionStatus({ type: 'error', text: 'Select a video first.' });
+            return;
+        }
+        if (!(typeof window !== 'undefined' && window.require)) {
+            setDataSelectionStatus({ type: 'error', text: 'Local file access requires the desktop application.' });
+            return;
+        }
+
+        const fs = window.require('fs');
+        const pathModule = window.require('path');
+
+        if (!fs?.existsSync || !pathModule) {
+            setDataSelectionStatus({ type: 'error', text: 'File system bridge unavailable in this environment.' });
+            return;
+        }
+        if (!fs.existsSync(videoPath)) {
+            setDataSelectionStatus({ type: 'error', text: 'Selected video not found on disk.' });
+            return;
+        }
+
+        setDataSelectionStatus({ type: 'pending', text: 'Loading video and annotations…' });
+        if (videoRef.current) {
+            videoRef.current.pause();
+        }
+        setVideoLoaded(false);
+        setIsPlaying(false);
+        setVideoSource(null);
+        setAllBoxes({});
+        setSelectedId(null);
+        setCurrentFrameTime(0);
+
+        const jsonPath = pathModule.join(
+            pathModule.dirname(videoPath),
+            `${pathModule.basename(videoPath, pathModule.extname(videoPath))}.json`
+        );
+
+        let annotationsLoaded = false;
+        let framesPayload = {};
+
+        if (fs.promises) {
+            try {
+                const rawJson = await fs.promises.readFile(jsonPath, 'utf8');
+                const parsed = JSON.parse(rawJson);
+                const frames = parsed?.frames && typeof parsed.frames === 'object' ? parsed.frames : parsed;
+                if (frames && typeof frames === 'object') {
+                    framesPayload = frames;
+                    annotationsLoaded = Object.keys(framesPayload).length > 0;
+                }
+            } catch (error) {
+                if (error.code !== 'ENOENT') {
+                    console.error('Unable to load annotation JSON', error);
+                    setVideoSource(resolveVideoSource(videoPath));
+                    setActiveTab('annotation');
+                    setDataSelectionStatus({ type: 'error', text: error.message || 'Failed to load annotations.' });
+                    return;
+                }
+            }
+        }
+
+        setAllBoxes(annotationsLoaded ? transformModelAnnotations(framesPayload) : {});
+        setVideoSource(resolveVideoSource(videoPath));
         setActiveTab('annotation');
+        setDataSelectionStatus({
+            type: 'success',
+            text: annotationsLoaded ? 'Video and annotations loaded.' : 'Video loaded without annotations.'
+        });
     };
 
     // Handle video controls separately
     const handlePlayPause = () => {
-        if (videoRef.current.paused) {
-            videoRef.current.play();
+        const video = videoRef.current;
+        if (!video) return;
+        if (video.paused) {
+            video.play();
         } else {
-            videoRef.current.pause();
+            video.pause();
         }
     };
 
     const handleRewind = () => {
-        videoRef.current.currentTime -= 5;
+        const video = videoRef.current;
+        if (!video) return;
+        video.currentTime = Math.max(0, video.currentTime - 5);
     };
 
     const handleForward = () => {
-        videoRef.current.currentTime += 5;
+        const video = videoRef.current;
+        if (!video) return;
+        const duration = Number.isFinite(video.duration) ? video.duration : video.currentTime;
+        video.currentTime = Math.min(duration, video.currentTime + 5);
     };
 
     // Mouse event handlers for the canvas
     const handleMouseDown = (e) => {
-        // Prevent click from reaching video
         e.evt.preventDefault();
         e.evt.stopPropagation();
 
-        if (mode === 'draw') {
+        if (mode === 'add') {
             const pos = e.target.getStage().getPointerPosition();
             // Only start drawing if clicking on empty canvas
             if (e.target === e.target.getStage() || e.target === layerRef.current) {
+                const uniqueCount = new Set(Object.values(allBoxes).flat().map(b => b.id)).size;
                 setIsDrawing(true);
                 setCurrentBox({
                     x: pos.x,
@@ -83,21 +232,21 @@ function App() {
                     width: 0,
                     height: 0,
                     id: `box-${Date.now()}`,
-                    name: `Box ${Object.values(allBoxes).flat().length + 1}`,
-                    startFrame: currentFrameTime,
-                    endFrame: null // null means visible until the end of the video
+                    name: `Box ${uniqueCount + 1}`,
+                    startFrame: Math.floor(currentFrameTime),
+                    endFrame: null
                 });
                 setSelectedId(null);
             }
+        } else if (mode === 'edit' && (e.target === e.target.getStage() || e.target === layerRef.current)) {
+            setSelectedId(null);
         }
     };
 
     const handleMouseMove = (e) => {
-        // Prevent interaction with video during drawing
+        if (!isDrawing || mode !== 'add') return;
         e.evt.preventDefault();
         e.evt.stopPropagation();
-
-        if (!isDrawing || mode !== 'draw') return;
 
         const stage = e.target.getStage();
         const point = stage.getPointerPosition();
@@ -110,46 +259,47 @@ function App() {
     };
 
     const handleMouseUp = (e) => {
-        // Prevent interaction with video
+        if (!isDrawing || mode !== 'add' || !currentBox) {
+            setIsDrawing(false);
+            setCurrentBox(null);
+            return;
+        }
         e.evt.preventDefault();
         e.evt.stopPropagation();
 
-        if (isDrawing && currentBox) {
-            if (Math.abs(currentBox.width) > 5 && Math.abs(currentBox.height) > 5) {
-                // Ensure positive width/height by normalizing coordinates
-                const normalizedBox = {
-                    ...currentBox,
-                    x: currentBox.width < 0 ? currentBox.x + currentBox.width : currentBox.x,
-                    y: currentBox.height < 0 ? currentBox.y + currentBox.height : currentBox.y,
-                    width: Math.abs(currentBox.width),
-                    height: Math.abs(currentBox.height)
-                };
+        if (Math.abs(currentBox.width) > 5 && Math.abs(currentBox.height) > 5) {
+            const normalizedBox = {
+                ...currentBox,
+                x: currentBox.width < 0 ? currentBox.x + currentBox.width : currentBox.x,
+                y: currentBox.height < 0 ? currentBox.y + currentBox.height : currentBox.y,
+                width: Math.abs(currentBox.width),
+                height: Math.abs(currentBox.height)
+            };
 
-                // Add box to the frame-specific collection
-                setAllBoxes(prev => {
-                    const newBoxes = { ...prev };
-                    if (!newBoxes[currentFrameTime]) {
-                        newBoxes[currentFrameTime] = [];
-                    }
-                    newBoxes[currentFrameTime] = [...newBoxes[currentFrameTime], normalizedBox];
-                    return newBoxes;
-                });
-            }
-            setIsDrawing(false);
-            setCurrentBox(null);
+            setAllBoxes(prev => {
+                const newBoxes = { ...prev };
+                const frameKey = Math.floor(currentFrameTime);
+                if (!newBoxes[frameKey]) {
+                    newBoxes[frameKey] = [];
+                }
+                newBoxes[frameKey] = [...newBoxes[frameKey], normalizedBox];
+                return newBoxes;
+            });
+            setSelectedId(normalizedBox.id);
         }
+
+        setIsDrawing(false);
+        setCurrentBox(null);
     };
 
-    const handleBoxClick = (e, box) => {
-        // Prevent video interaction
+    const handleBoxPointerDown = (e, box) => {
         e.evt.preventDefault();
         e.evt.stopPropagation();
         e.cancelBubble = true;
 
         if (mode === 'delete') {
-            // In delete mode, just select the box for later deletion
             setSelectedId(box.id);
-        } else {
+        } else if (mode === 'edit') {
             setSelectedId(box.id);
         }
     };
@@ -171,32 +321,27 @@ function App() {
 
     // New function to set end frame (delete onwards)
     const deleteOnwards = () => {
-        if (selectedId) {
-            // Find the box across all frames
-            let targetBox = null;
-            Object.values(allBoxes).flat().forEach(box => {
-                if (box.id === selectedId) {
-                    targetBox = box;
-                }
-            });
-
-            if (targetBox) {
-                // Set the end frame for this box to the current frame
-                setAllBoxes(prev => {
-                    const newBoxes = { ...prev };
-                    // For all frames containing this box, update its endFrame
-                    Object.keys(newBoxes).forEach(frameTime => {
-                        newBoxes[frameTime] = newBoxes[frameTime].map(box =>
-                            box.id === selectedId
-                                ? { ...box, endFrame: currentFrameTime }
-                                : box
-                        );
-                    });
-                    return newBoxes;
-                });
+        if (!selectedId) return;
+        let targetBox = null;
+        Object.values(allBoxes).flat().forEach(box => {
+            if (box.id === selectedId) {
+                targetBox = box;
             }
-            setSelectedId(null);
+        });
+
+        if (targetBox) {
+            const endAt = Math.floor(currentFrameTime);
+            setAllBoxes(prev => {
+                const newBoxes = { ...prev };
+                Object.keys(newBoxes).forEach(frameTime => {
+                    newBoxes[frameTime] = newBoxes[frameTime].map(box =>
+                        box.id === selectedId ? { ...box, endFrame: endAt } : box
+                    );
+                });
+                return newBoxes;
+            });
         }
+        setSelectedId(null);
     };
 
     // Replace the old deleteSelected function
@@ -243,43 +388,61 @@ function App() {
         if (!video) return;
 
         const updateCurrentTime = () => {
-            // Round to nearest second for simplicity
-            const timeInSeconds = Math.floor(video.currentTime);
-            setCurrentFrameTime(timeInSeconds);
+            setCurrentFrameTime(Number(video.currentTime.toFixed(2)));
         };
 
         video.addEventListener('timeupdate', updateCurrentTime);
         return () => video.removeEventListener('timeupdate', updateCurrentTime);
-    }, []);
+    }, [videoSource]);
 
     // Update video duration on load
     useEffect(() => {
         const video = videoRef.current;
-        if (!video) return;
+        if (!video || !videoSource) return;
 
         const handleLoadedMetadata = () => {
-            setVideoDuration(Math.floor(video.duration));
+            setVideoDuration(Number(video.duration.toFixed(2)));
+            setVideoLoaded(true);
         };
 
         video.addEventListener('loadedmetadata', handleLoadedMetadata);
-        return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-    }, []);
-
-    // Handle slider change
-    const handleSliderChange = (e) => {
-        const value = Number(e.target.value);
-        if (videoRef.current) {
-            videoRef.current.currentTime = value;
+        if (video.readyState >= 1) {
+            handleLoadedMetadata();
         }
+        return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    }, [videoSource]);
+
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video || !videoSource) return;
+
+        const handlePlay = () => setIsPlaying(true);
+        const handlePause = () => setIsPlaying(false);
+        const handleEnded = () => setIsPlaying(false);
+
+        video.addEventListener('play', handlePlay);
+        video.addEventListener('pause', handlePause);
+        video.addEventListener('ended', handleEnded);
+
+        return () => {
+            video.removeEventListener('play', handlePlay);
+            video.removeEventListener('pause', handlePause);
+            video.removeEventListener('ended', handleEnded);
+        };
+    }, [videoSource]);
+
+    const handleSliderChange = (value) => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.currentTime = value;
+        setCurrentFrameTime(value);
     };
 
-    // Get boxes for the current frame - update to respect start and end frames
-    const getCurrentBoxes = () => {
-        // Collect all boxes from the start of the video up to the current frame
+    const getCurrentBoxes = (currentSecond) => {
         const activeBoxes = [];
         const frameTimes = Object.keys(allBoxes)
             .map(Number)
-            .filter(time => time <= currentFrameTime)
+            .filter(time => time <= currentSecond)
             .sort((a, b) => a - b);
 
         // Add boxes from each frame up to current
@@ -288,8 +451,8 @@ function App() {
                 // Check if the box is active in the current frame
                 // (after its start frame and before or at its end frame, if set)
                 if (
-                    box.startFrame <= currentFrameTime &&
-                    (box.endFrame === null || currentFrameTime <= box.endFrame)
+                    box.startFrame <= currentSecond &&
+                    (box.endFrame === null || currentSecond <= box.endFrame)
                 ) {
                     // If this box ID is already in activeBoxes, update it
                     const existingIndex = activeBoxes.findIndex(b => b.id === box.id);
@@ -317,8 +480,8 @@ function App() {
     };
 
     const selectBoxFromToolbar = (boxId) => {
+        if (mode !== 'edit') return;
         setSelectedId(boxId);
-        setMode('select');
     };
 
     // Add the missing handleSave function
@@ -354,12 +517,19 @@ function App() {
     };
 
     // Current boxes for rendering in the canvas
-    const boxesToRender = getCurrentBoxes();
+    const currentFrameSecond = Math.floor(currentFrameTime);
+    const boxesToRender = getCurrentBoxes(currentFrameSecond);
 
     return (
         <div className="app">
             {/* Tabs navigation */}
             <div className="tab-nav">
+                <button
+                    className={`tab-button${activeTab === 'ai' ? ' active' : ''}`}
+                    onClick={() => setActiveTab('ai')}
+                >
+                    AI Tools
+                </button>
                 <button
                     className={`tab-button${activeTab === 'data' ? ' active' : ''}`}
                     onClick={() => setActiveTab('data')}
@@ -374,15 +544,15 @@ function App() {
                 </button>
             </div>
             <div className="tab-content">
-                {activeTab === 'data' ? (
+                {activeTab === 'ai' ? (
+                    <AITools />
+                ) : activeTab === 'data' ? (
                     <DataSelection
-                        subjects={subjects}
-                        cameras={cameras}
-                        selectedSubject={selectedSubject}
-                        setSelectedSubject={setSelectedSubject}
-                        selectedCamera={selectedCamera}
-                        setSelectedCamera={setSelectedCamera}
+                        selectedVideo={selectedVideo}
+                        onBrowseVideo={browseForVideo}
+                        onChangeVideoInput={handleVideoInputChange}
                         handleLoadVideo={handleLoadVideo}
+                        status={dataSelectionStatus}
                     />
                 ) : (
                     <div style={{ display: 'flex', height: '100%' }}>
@@ -396,145 +566,150 @@ function App() {
                             handleSave={handleSave}
                             getAllUniqueBoxes={getAllUniqueBoxes}
                             selectBoxFromToolbar={selectBoxFromToolbar}
-                            currentFrameTime={currentFrameTime}
+                            currentFrameTime={currentFrameSecond}
                         />
                         <div className="video-container" ref={videoContainerRef}>
-                            {/* Video without controls - we'll make our own */}
-                            <video
-                                ref={videoRef}
-                                src="/assets/sample.mp4"
-                                width={videoDimensions.width}
-                                height={videoDimensions.height}
-                            />
+                            {!videoSource ? (
+                                <div style={{ textAlign: 'center', color: '#86868b', padding: '40px' }}>
+                                    Load a video to start annotating.
+                                </div>
+                            ) : (
+                                <>
+                                    <video
+                                        ref={videoRef}
+                                        src={videoSource}
+                                        width={videoDimensions.width}
+                                        height={videoDimensions.height}
+                                    />
+                                    {videoLoaded ? (
+                                        <>
+                                            <Stage
+                                                width={videoDimensions.width}
+                                                height={videoDimensions.height}
+                                                onMouseDown={handleMouseDown}
+                                                onMouseMove={handleMouseMove}
+                                                onMouseUp={handleMouseUp}
+                                                className="canvas-overlay"
+                                                style={{ pointerEvents: 'auto' }}
+                                            >
+                                                <Layer ref={layerRef}>
+                                                    {boxesToRender.map(box => (
+                                                        <Rect
+                                                            key={box.id}
+                                                            id={`box-${box.id}`}
+                                                            x={box.x}
+                                                            y={box.y}
+                                                            width={box.width}
+                                                            height={box.height}
+                                                            stroke={selectedId === box.id ? '#007AFF' : '#FF3B30'}
+                                                            strokeWidth={selectedId === box.id ? 2.5 : 2}
+                                                            fill="transparent"
+                                                            draggable={mode === 'edit'}
+                                                            onMouseDown={(e) => handleBoxPointerDown(e, box)}
+                                                            onTouchStart={(e) => handleBoxPointerDown(e, box)}
+                                                            shadowColor="rgba(0, 0, 0, 0.1)"
+                                                            shadowBlur={selectedId === box.id ? 8 : 4}
+                                                            shadowOpacity={selectedId === box.id ? 0.3 : 0.2}
+                                                            shadowOffsetY={2}
+                                                            onDragEnd={(e) => {
+                                                                const node = e.target;
+                                                                setAllBoxes(prev => {
+                                                                    const newBoxes = { ...prev };
+                                                                    const frameKey = currentFrameSecond;
+                                                                    if (!newBoxes[frameKey]) {
+                                                                        newBoxes[frameKey] = [];
+                                                                    }
+                                                                    const updatedBox = {
+                                                                        ...box,
+                                                                        x: node.x(),
+                                                                        y: node.y()
+                                                                    };
+                                                                    const boxIndex = newBoxes[frameKey].findIndex(b => b.id === box.id);
+                                                                    if (boxIndex >= 0) {
+                                                                        newBoxes[frameKey][boxIndex] = updatedBox;
+                                                                    } else {
+                                                                        newBoxes[frameKey].push(updatedBox);
+                                                                    }
+                                                                    return newBoxes;
+                                                                });
+                                                            }}
+                                                            onTransformEnd={(e) => {
+                                                                const node = e.target;
+                                                                setAllBoxes(prev => {
+                                                                    const newBoxes = { ...prev };
+                                                                    const frameKey = currentFrameSecond;
+                                                                    if (!newBoxes[frameKey]) {
+                                                                        newBoxes[frameKey] = [];
+                                                                    }
+                                                                    const updatedBox = {
+                                                                        ...box,
+                                                                        x: node.x(),
+                                                                        y: node.y(),
+                                                                        width: node.width() * node.scaleX(),
+                                                                        height: node.height() * node.scaleY()
+                                                                    };
+                                                                    const boxIndex = newBoxes[frameKey].findIndex(b => b.id === box.id);
+                                                                    if (boxIndex >= 0) {
+                                                                        newBoxes[frameKey][boxIndex] = updatedBox;
+                                                                    } else {
+                                                                        newBoxes[frameKey].push(updatedBox);
+                                                                    }
+                                                                    return newBoxes;
+                                                                });
+                                                                node.scaleX(1);
+                                                                node.scaleY(1);
+                                                            }}
+                                                        />
+                                                    ))}
 
-                            {/* Konva canvas overlay */}
-                            <Stage
-                                width={videoDimensions.width}
-                                height={videoDimensions.height}
-                                onMouseDown={handleMouseDown}
-                                onMousemove={handleMouseMove}
-                                onMouseup={handleMouseUp}
-                                className="canvas-overlay"
-                                style={{ pointerEvents: 'auto' }}
-                            >
-                                <Layer ref={layerRef}>
-                                    {boxesToRender.map(box => (
-                                        <Rect
-                                            key={box.id}
-                                            id={`box-${box.id}`}
-                                            x={box.x}
-                                            y={box.y}
-                                            width={box.width}
-                                            height={box.height}
-                                            stroke={selectedId === box.id ? '#007AFF' : '#FF3B30'}
-                                            strokeWidth={selectedId === box.id ? 2.5 : 2}
-                                            fill="transparent"
-                                            draggable={selectedId === box.id && mode !== 'delete'}
-                                            onClick={(e) => handleBoxClick(e, box)}
-                                            shadowColor="rgba(0, 0, 0, 0.1)"
-                                            shadowBlur={selectedId === box.id ? 8 : 4}
-                                            shadowOpacity={selectedId === box.id ? 0.3 : 0.2}
-                                            shadowOffsetY={2}
-                                            onDragEnd={(e) => {
-                                                const node = e.target;
-                                                // Update this box in the current frame
-                                                setAllBoxes(prev => {
-                                                    const newBoxes = { ...prev };
-                                                    if (!newBoxes[currentFrameTime]) {
-                                                        newBoxes[currentFrameTime] = [];
-                                                    }
+                                                    {currentBox && (
+                                                        <Rect
+                                                            x={currentBox.x}
+                                                            y={currentBox.y}
+                                                            width={currentBox.width}
+                                                            height={currentBox.height}
+                                                            stroke="#007AFF"
+                                                            strokeWidth={2}
+                                                            fill="transparent"
+                                                            dash={[6, 3]}
+                                                            shadowColor="rgba(0, 122, 255, 0.2)"
+                                                            shadowBlur={6}
+                                                            shadowOpacity={0.4}
+                                                            shadowOffsetY={1}
+                                                        />
+                                                    )}
 
-                                                    // Update or add the box for this frame
-                                                    const updatedBox = {
-                                                        ...box,
-                                                        x: node.x(),
-                                                        y: node.y()
-                                                    };
+                                                    {selectedId && mode !== 'delete' && (
+                                                        <Transformer
+                                                            ref={transformerRef}
+                                                            boundBoxFunc={(oldBox, newBox) => {
+                                                                if (newBox.width < 10 || newBox.height < 10) {
+                                                                    return oldBox;
+                                                                }
+                                                                return newBox;
+                                                            }}
+                                                        />
+                                                    )}
+                                                </Layer>
+                                            </Stage>
 
-                                                    const boxIndex = newBoxes[currentFrameTime].findIndex(b => b.id === box.id);
-                                                    if (boxIndex >= 0) {
-                                                        newBoxes[currentFrameTime][boxIndex] = updatedBox;
-                                                    } else {
-                                                        newBoxes[currentFrameTime].push(updatedBox);
-                                                    }
-
-                                                    return newBoxes;
-                                                });
-                                            }}
-                                            onTransformEnd={(e) => {
-                                                const node = e.target;
-
-                                                // Update this box in the current frame
-                                                setAllBoxes(prev => {
-                                                    const newBoxes = { ...prev };
-                                                    if (!newBoxes[currentFrameTime]) {
-                                                        newBoxes[currentFrameTime] = [];
-                                                    }
-
-                                                    // Update or add the box for this frame
-                                                    const updatedBox = {
-                                                        ...box,
-                                                        x: node.x(),
-                                                        y: node.y(),
-                                                        width: node.width() * node.scaleX(),
-                                                        height: node.height() * node.scaleY()
-                                                    };
-
-                                                    const boxIndex = newBoxes[currentFrameTime].findIndex(b => b.id === box.id);
-                                                    if (boxIndex >= 0) {
-                                                        newBoxes[currentFrameTime][boxIndex] = updatedBox;
-                                                    } else {
-                                                        newBoxes[currentFrameTime].push(updatedBox);
-                                                    }
-
-                                                    return newBoxes;
-                                                });
-
-                                                node.scaleX(1);
-                                                node.scaleY(1);
-                                            }}
-                                        />
-                                    ))}
-
-                                    {currentBox && (
-                                        <Rect
-                                            x={currentBox.x}
-                                            y={currentBox.y}
-                                            width={currentBox.width}
-                                            height={currentBox.height}
-                                            stroke="#007AFF"
-                                            strokeWidth={2}
-                                            fill="transparent"
-                                            dash={[6, 3]}
-                                            shadowColor="rgba(0, 122, 255, 0.2)"
-                                            shadowBlur={6}
-                                            shadowOpacity={0.4}
-                                            shadowOffsetY={1}
-                                        />
+                                            <VideoControls
+                                                isPlaying={isPlaying}
+                                                handlePlayPause={handlePlayPause}
+                                                handleRewind={handleRewind}
+                                                handleForward={handleForward}
+                                                handleSliderChange={handleSliderChange}
+                                                currentFrameTime={currentFrameTime}
+                                                videoDuration={videoDuration}
+                                            />
+                                        </>
+                                    ) : (
+                                        <div style={{ position: 'absolute', bottom: 40, color: '#86868b', background: 'rgba(255,255,255,0.9)', padding: '8px 16px', borderRadius: '12px' }}>
+                                            Loading video...
+                                        </div>
                                     )}
-
-                                    {selectedId && mode !== 'delete' && (
-                                        <Transformer
-                                            ref={transformerRef}
-                                            boundBoxFunc={(oldBox, newBox) => {
-                                                if (newBox.width < 10 || newBox.height < 10) {
-                                                    return oldBox;
-                                                }
-                                                return newBox;
-                                            }}
-                                        />
-                                    )}
-                                </Layer>
-                            </Stage>
-
-                            <VideoControls
-                                handlePlayPause={handlePlayPause}
-                                handleRewind={handleRewind}
-                                handleForward={handleForward}
-                                handleSliderChange={handleSliderChange}
-                                currentFrameTime={currentFrameTime}
-                                videoDuration={videoDuration}
-                            />
+                                </>
+                            )}
                         </div>
                     </div>
                 )}

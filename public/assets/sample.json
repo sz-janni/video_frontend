@@ -1,0 +1,61 @@
+{
+    "meta": {
+        "video": "sample.mp4",
+        "description": "Model predictions for bounding boxes keyed by seconds",
+        "schema": {
+            "frames": {
+                "<second>": [
+                    {
+                        "id": "<tracking id>",
+                        "class": "<label>",
+                        "x": 0,
+                        "y": 0,
+                        "width": 0,
+                        "height": 0,
+                        "endFrame": "optional - if present, the box is visible until this second inclusive"
+                    }
+                ]
+            }
+        }
+    },
+    "frames": {
+        "0": [
+            {
+                "id": "obj-1",
+                "class": "Person",
+                "x": 120,
+                "y": 100,
+                "width": 150,
+                "height": 320
+            },
+            {
+                "id": "obj-2",
+                "class": "Dog",
+                "x": 420,
+                "y": 220,
+                "width": 120,
+                "height": 100
+            }
+        ],
+        "1": [
+            {
+                "id": "obj-1",
+                "class": "Person",
+                "x": 130,
+                "y": 100,
+                "width": 150,
+                "height": 320
+            }
+        ],
+        "5": [
+            {
+                "id": "obj-3",
+                "class": "Car",
+                "x": 260,
+                "y": 180,
+                "width": 220,
+                "height": 120
+            }
+        ]
+    }
+}
