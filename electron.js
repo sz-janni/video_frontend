@@ -36,6 +36,18 @@ const createWindow = () => {
 
 const resolveFileUrl = (targetPath) => pathToFileURL(path.resolve(targetPath)).href;
 
+const resolveScriptPath = (fileName) => {
+    if (!app.isPackaged) {
+        return path.join(app.getAppPath(), fileName);
+    }
+    const candidates = [
+        path.join(process.resourcesPath, fileName),
+        path.join(process.resourcesPath, 'app.asar.unpacked', fileName),
+        path.join(path.dirname(app.getAppPath()), 'app.asar.unpacked', fileName)
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate)) ?? path.join(process.resourcesPath, fileName);
+};
+
 ipcMain.handle('dialog:open', async (event, options = {}) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     return dialog.showOpenDialog(browserWindow ?? null, options);
@@ -118,7 +130,8 @@ ipcMain.handle('ai:run', async (_event, payload = {}) => {
         return { ok: false, error: 'Input and output folders are required.' };
     }
 
-    const scriptPath = path.join(app.getAppPath(), 'test.ps1');
+    const scriptRoot = app.isPackaged ? process.resourcesPath : app.getAppPath();
+    const scriptPath = resolveScriptPath('test.ps1');
 
     try {
         await fs.promises.access(scriptPath);

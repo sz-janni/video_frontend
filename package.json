@@ -55,6 +55,9 @@
             "preload.js",
             "test.ps1"
         ],
+        "asarUnpack": [
+            "test.ps1"
+        ],
         "directories": {
             "output": "dist"
         },
