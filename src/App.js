@@ -8,27 +8,75 @@ import DataSelection from './DataSelection';
 
 const transformModelAnnotations = (frames = {}) => {
     const formatted = {};
-    Object.entries(frames).forEach(([frameKey, frameBoxes]) => {
-        const frameTime = Number(frameKey);
-        if (Number.isNaN(frameTime) || !Array.isArray(frameBoxes)) {
-            return;
+    const trackMeta = {};
+    const sortedEntries = Object.entries(frames || {})
+        .map(([frameKey, frameBoxes]) => [Number(frameKey), Array.isArray(frameBoxes) ? frameBoxes : []])
+        .filter(([frameTime]) => Number.isFinite(frameTime))
+        .sort((a, b) => a[0] - b[0]);
+
+    sortedEntries.forEach(([frameTime, frameBoxes]) => {
+        if (!formatted[frameTime]) {
+            formatted[frameTime] = [];
         }
-        formatted[frameTime] = frameBoxes.map((box, index) => {
-            const rawEnd = box.endFrame;
-            const endFrame = rawEnd === undefined || rawEnd === null ? null : Number(rawEnd);
-            return {
-                id: box.id || `model-${frameTime}-${index}`,
-                name: box.class ? `${box.class}${box.id ? ` (${box.id})` : ''}` : (box.id || `Box ${index + 1}`),
+        frameBoxes.forEach((box, index) => {
+            const trackId = box.id || `model-${frameTime}-${index}`;
+            const rawConfidence = Number(box.confidence);
+            const normalizedConfidence = Number.isFinite(rawConfidence)
+                ? Math.min(1, Math.max(0, rawConfidence))
+                : 1;
+            if (!trackMeta[trackId]) {
+                trackMeta[trackId] = {
+                    id: trackId,
+                    name: box.class ? `${box.class}${box.id ? ` (${box.id})` : ''}` : (box.id || `Box ${index + 1}`),
+                    startFrame: frameTime,
+                    endFrame: frameTime,
+                    confidence: normalizedConfidence
+                };
+            } else {
+                trackMeta[trackId].endFrame = frameTime;
+            }
+            formatted[frameTime].push({
+                id: trackId,
+                name: trackMeta[trackId].name,
                 x: box.x,
                 y: box.y,
                 width: box.width,
                 height: box.height,
-                startFrame: box.startFrame !== undefined ? Number(box.startFrame) : frameTime,
-                endFrame
-            };
+                startFrame: trackMeta[trackId].startFrame,
+                endFrame: trackMeta[trackId].endFrame,
+                confidence: trackMeta[trackId].confidence
+            });
         });
     });
-    return formatted;
+
+    Object.values(formatted).forEach((frameBoxes) => {
+        frameBoxes.forEach((box) => {
+            const meta = trackMeta[box.id];
+            if (meta) {
+                box.startFrame = meta.startFrame;
+                box.endFrame = meta.endFrame ?? meta.startFrame;
+                box.name = meta.name;
+                box.confidence = meta.confidence ?? 1;
+            }
+        });
+    });
+
+    const tracks = Object.values(trackMeta)
+        .map((track) => ({
+            ...track,
+            endFrame: track.endFrame ?? track.startFrame,
+            confidence: track.confidence ?? 1
+        }))
+        .sort((a, b) => a.startFrame - b.startFrame);
+
+    return { frames: formatted, tracks };
+};
+
+const getConfidenceColor = (value) => {
+    const clamped = Math.max(0, Math.min(1, Number(value)));
+    const hue = clamped * 120;
+    const lightness = clamped > 0.5 ? 48 : 54;
+    return `hsl(${Math.round(hue)}, 82%, ${lightness}%)`;
 };
 
 function App() {
@@ -57,6 +105,8 @@ function App() {
     const [videoDuration, setVideoDuration] = useState(0);
     const [videoSource, setVideoSource] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [loadedTracks, setLoadedTracks] = useState([]);
+    const [confidenceThreshold, setConfidenceThreshold] = useState(0);
 
     const handleVideoInputChange = (value) => {
         setSelectedVideo(value);
@@ -131,6 +181,7 @@ function App() {
         setAllBoxes({});
         setSelectedId(null);
         setCurrentFrameTime(0);
+        setLoadedTracks([]);
 
         try {
             const response = await loadVideoResource(videoPath);
@@ -140,11 +191,9 @@ function App() {
                 return;
             }
 
-            const annotations = response.annotations && typeof response.annotations === 'object'
-                ? transformModelAnnotations(response.annotations)
-                : {};
-
-            setAllBoxes(annotations);
+            const { frames: annotationFrames, tracks } = transformModelAnnotations(response.annotations);
+            setAllBoxes(annotationFrames);
+            setLoadedTracks(tracks);
             setVideoSource(response.videoUrl || resolveVideoSource(videoPath));
             setActiveTab('annotation');
             setDataSelectionStatus({
@@ -200,7 +249,8 @@ function App() {
                     id: `box-${Date.now()}`,
                     name: `Box ${uniqueCount + 1}`,
                     startFrame: Math.floor(currentFrameTime),
-                    endFrame: null
+                    endFrame: null,
+                    confidence: 1
                 });
                 setSelectedId(null);
             }
@@ -404,7 +454,7 @@ function App() {
         setCurrentFrameTime(value);
     };
 
-    const getCurrentBoxes = (currentSecond) => {
+    const getCurrentBoxes = (currentSecond, minConfidence = 0) => {
         const activeBoxes = [];
         const frameTimes = Object.keys(allBoxes)
             .map(Number)
@@ -431,7 +481,7 @@ function App() {
             });
         });
 
-        return activeBoxes;
+        return activeBoxes.filter(box => (box.confidence ?? 1) >= minConfidence);
     };
 
     // Get all unique boxes across all frames
@@ -445,31 +495,57 @@ function App() {
         return Object.values(uniqueBoxes);
     };
 
-    const selectBoxFromToolbar = (boxId) => {
-        if (mode !== 'edit') return;
-        setSelectedId(boxId);
+    const handleTrackSelect = (track) => {
+        setSelectedId(track.id);
+        const video = videoRef.current;
+        if (video) {
+            video.currentTime = track.start;
+        }
+    };
+
+    const handleConfidenceThresholdChange = (value) => {
+        const clamped = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+        setConfidenceThreshold(Math.round(clamped * 10) / 10);
     };
 
     // Add the missing handleSave function
     const handleSave = () => {
-        // Format the data for export
-        const exportData = {};
-
-        // Process each frame's boxes
-        Object.keys(allBoxes).forEach(frameTime => {
-            exportData[frameTime] = allBoxes[frameTime].map(box => ({
-                id: box.id,
-                name: box.name,
-                x: box.x,
-                y: box.y,
-                width: box.width,
-                height: box.height,
-                startFrame: box.startFrame,
-                endFrame: box.endFrame
-            }));
+        const uniqueBoxes = getAllUniqueBoxes();
+        const filteredBoxes = uniqueBoxes.filter((box) => (box.confidence ?? 1) >= confidenceThreshold);
+        const baseMax = Number.isFinite(videoDuration) && videoDuration > 0
+            ? Math.floor(videoDuration)
+            : 0;
+        let maxFrameTime = baseMax;
+        filteredBoxes.forEach((box) => {
+            const candidateEnd = box.endFrame === null
+                ? (baseMax > 0 ? baseMax : maxFrameTime)
+                : box.endFrame;
+            if (Number.isFinite(candidateEnd)) {
+                maxFrameTime = Math.max(maxFrameTime, candidateEnd);
+            }
+            if (Number.isFinite(box.startFrame)) {
+                maxFrameTime = Math.max(maxFrameTime, box.startFrame);
+            }
         });
 
-        // Log to console
+        const exportData = {};
+        for (let frame = 0; frame <= maxFrameTime; frame += 1) {
+            const boxesAtFrame = getCurrentBoxes(frame, confidenceThreshold);
+            if (boxesAtFrame.length > 0) {
+                exportData[frame] = boxesAtFrame.map((box) => ({
+                    id: box.id,
+                    name: box.name,
+                    x: box.x,
+                    y: box.y,
+                    width: box.width,
+                    height: box.height,
+                    startFrame: box.startFrame,
+                    endFrame: box.endFrame,
+                    confidence: box.confidence ?? 1
+                }));
+            }
+        }
+
         console.log('Saved boxes data:', exportData);
 
         // Optional: Create downloadable JSON
@@ -484,7 +560,31 @@ function App() {
 
     // Current boxes for rendering in the canvas
     const currentFrameSecond = Math.floor(currentFrameTime);
-    const boxesToRender = getCurrentBoxes(currentFrameSecond);
+    const boxesToRender = getCurrentBoxes(currentFrameSecond, confidenceThreshold);
+    const uniqueBoxes = getAllUniqueBoxes();
+    const filteredUniqueBoxes = uniqueBoxes.filter((box) => (box.confidence ?? 1) >= confidenceThreshold);
+
+    useEffect(() => {
+        if (!selectedId) return;
+        if (!filteredUniqueBoxes.some((box) => box.id === selectedId)) {
+            setSelectedId(null);
+        }
+    }, [filteredUniqueBoxes, selectedId]);
+
+    const baseTimelineMax = Number.isFinite(videoDuration) && videoDuration > 0 ? Math.floor(videoDuration) : 0;
+    const timelineMax = filteredUniqueBoxes.reduce((max, box) => {
+        const start = Number.isFinite(box.startFrame) ? box.startFrame : 0;
+        const end = box.endFrame === null ? baseTimelineMax : box.endFrame;
+        return Math.max(max, start, Number.isFinite(end) ? end : max);
+    }, baseTimelineMax);
+    const timelineDuration = timelineMax > 0 ? timelineMax : Math.max(baseTimelineMax, 1);
+    const objectTracks = filteredUniqueBoxes
+        .map((box) => {
+            const start = Math.max(0, Math.floor(Number.isFinite(box.startFrame) ? box.startFrame : 0));
+            const rawEnd = box.endFrame === null ? timelineDuration : Math.max(start, Math.floor(box.endFrame));
+            return { ...box, start, end: rawEnd, confidence: box.confidence ?? 1 };
+        })
+        .sort((a, b) => (a.start === b.start ? a.name.localeCompare(b.name) : a.start - b.start));
 
     return (
         <div className="app">
@@ -519,6 +619,7 @@ function App() {
                         onChangeVideoInput={handleVideoInputChange}
                         handleLoadVideo={handleLoadVideo}
                         status={dataSelectionStatus}
+                        tracks={loadedTracks}
                     />
                 ) : (
                     <div style={{ display: 'flex', height: '100%' }}>
@@ -530,9 +631,9 @@ function App() {
                             deleteObject={deleteObject}
                             deleteOnwards={deleteOnwards}
                             handleSave={handleSave}
-                            getAllUniqueBoxes={getAllUniqueBoxes}
-                            selectBoxFromToolbar={selectBoxFromToolbar}
                             currentFrameTime={currentFrameSecond}
+                            confidenceThreshold={confidenceThreshold}
+                            onConfidenceThresholdChange={handleConfidenceThresholdChange}
                         />
                         <div className="video-container" ref={videoContainerRef}>
                             {!videoSource ? (
@@ -540,15 +641,19 @@ function App() {
                                     Load a video to start annotating.
                                 </div>
                             ) : (
-                                <>
-                                    <video
-                                        ref={videoRef}
-                                        src={videoSource}
-                                        width={videoDimensions.width}
-                                        height={videoDimensions.height}
-                                    />
-                                    {videoLoaded ? (
-                                        <>
+                                <div className="video-layout">
+                                    <div
+                                        className="video-player-area"
+                                        style={{ width: videoDimensions.width, height: videoDimensions.height }}
+                                    >
+                                        <video
+                                            ref={videoRef}
+                                            src={videoSource}
+                                            width={videoDimensions.width}
+                                            height={videoDimensions.height}
+                                            className="video-element"
+                                        />
+                                        {videoLoaded ? (
                                             <Stage
                                                 width={videoDimensions.width}
                                                 height={videoDimensions.height}
@@ -556,7 +661,7 @@ function App() {
                                                 onMouseMove={handleMouseMove}
                                                 onMouseUp={handleMouseUp}
                                                 className="canvas-overlay"
-                                                style={{ pointerEvents: 'auto' }}
+                                                style={{ pointerEvents: 'auto', position: 'absolute', top: 0, left: 0 }}
                                             >
                                                 <Layer ref={layerRef}>
                                                     {boxesToRender.map(box => (
@@ -658,23 +763,93 @@ function App() {
                                                     )}
                                                 </Layer>
                                             </Stage>
-
-                                            <VideoControls
-                                                isPlaying={isPlaying}
-                                                handlePlayPause={handlePlayPause}
-                                                handleRewind={handleRewind}
-                                                handleForward={handleForward}
-                                                handleSliderChange={handleSliderChange}
-                                                currentFrameTime={currentFrameTime}
-                                                videoDuration={videoDuration}
-                                            />
+                                        ) : (
+                                            <div className="video-loading-overlay">
+                                                Loading video...
+                                            </div>
+                                        )}
+                                    </div>
+                                    {videoLoaded && (
+                                        <>
+                                            <div className="video-controls-wrapper">
+                                                <VideoControls
+                                                    isPlaying={isPlaying}
+                                                    handlePlayPause={handlePlayPause}
+                                                    handleRewind={handleRewind}
+                                                    handleForward={handleForward}
+                                                    handleSliderChange={handleSliderChange}
+                                                    currentFrameTime={currentFrameTime}
+                                                    videoDuration={videoDuration}
+                                                />
+                                            </div>
+                                            <div
+                                                className="object-tracks-area"
+                                                style={{ width: videoDimensions.width }}
+                                            >
+                                                <div className="object-tracks-header">
+                                                    Object Tracks
+                                                </div>
+                                                {objectTracks.length === 0 ? (
+                                                    <div className="object-tracks-empty">
+                                                        No tracks available yet.
+                                                    </div>
+                                                ) : (
+                                                    objectTracks.map((track) => {
+                                                        const totalWidth = Math.max(videoDimensions.width, 1);
+                                                        const duration = Math.max(track.end - track.start, 1);
+                                                        const left = Math.min((track.start / timelineDuration) * totalWidth, totalWidth - 4);
+                                                        const width = Math.max(4, Math.min((duration / timelineDuration) * totalWidth, totalWidth - left));
+                                                        const barColor = getConfidenceColor(track.confidence ?? 1);
+                                                        const isSelected = selectedId === track.id;
+                                                        return (
+                                                            <div key={track.id} className="object-track-row">
+                                                                <div
+                                                                    role="button"
+                                                                    tabIndex={0}
+                                                                    onClick={() => handleTrackSelect(track)}
+                                                                    onKeyDown={(event) => {
+                                                                        if (event.key === 'Enter' || event.key === ' ') {
+                                                                            event.preventDefault();
+                                                                            handleTrackSelect(track);
+                                                                        }
+                                                                    }}
+                                                                    className={`object-track-bar${isSelected ? ' is-selected' : ''}`}
+                                                                    style={{
+                                                                        left,
+                                                                        width,
+                                                                        background: barColor,
+                                                                        color: '#fff',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        paddingLeft: 12,
+                                                                        paddingRight: 12,
+                                                                        fontSize: 13,
+                                                                        fontWeight: 500,
+                                                                        cursor: 'pointer',
+                                                                        outline: 'none',
+                                                                        top: 4,
+                                                                        bottom: 4,
+                                                                        borderRadius: 10,
+                                                                        boxShadow: isSelected
+                                                                            ? '0 6px 16px rgba(0, 122, 255, 0.35), 0 0 0 2px rgba(255, 255, 255, 0.65)'
+                                                                            : '0 3px 12px rgba(0, 0, 0, 0.16)'
+                                                                    }}
+                                                                >
+                                                                    <span className="object-track-name">
+                                                                        {track.name}
+                                                                    </span>
+                                                                    <span className="object-track-times">
+                                                                        {`${track.start}s → ${track.endFrame === null ? 'end' : `${track.endFrame}s`}`}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
                                         </>
-                                    ) : (
-                                        <div style={{ position: 'absolute', bottom: 40, color: '#86868b', background: 'rgba(255,255,255,0.9)', padding: '8px 16px', borderRadius: '12px' }}>
-                                            Loading video...
-                                        </div>
                                     )}
-                                </>
+                                </div>
                             )}
                         </div>
                     </div>

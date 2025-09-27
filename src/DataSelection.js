@@ -5,7 +5,8 @@ function DataSelection({
     onBrowseVideo,
     onChangeVideoInput,
     handleLoadVideo,
-    status
+    status,
+    tracks = []
 }) {
     const isLoading = status?.type === 'pending';
 
@@ -37,6 +38,19 @@ function DataSelection({
                 {status?.text && status.type !== 'idle' && (
                     <div className={`ai-tools-status ai-tools-status--${status.type}`} style={{ width: '100%' }}>
                         {status.text}
+                    </div>
+                )}
+                {tracks.length > 0 && (
+                    <div className="track-summary" style={{ width: '100%', marginTop: 16 }}>
+                        <h3 style={{ marginBottom: 12, fontSize: 15, fontWeight: 600 }}>Detected Tracks</h3>
+                        <ul style={{ paddingLeft: 18, margin: 0, maxHeight: 160, overflowY: 'auto' }}>
+                            {tracks.map((track) => (
+                                <li key={track.id} style={{ marginBottom: 6, fontSize: 14 }}>
+                                    <span style={{ fontWeight: 500 }}>{track.name}</span>
+                                    <span style={{ color: '#86868b' }}>{` — ${track.startFrame}s → ${track.endFrame}s`}</span>
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 )}
                 <button

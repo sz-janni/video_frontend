@@ -8,9 +8,9 @@ function Toolbar({
     deleteObject,
     deleteOnwards,
     handleSave,
-    getAllUniqueBoxes,
-    selectBoxFromToolbar,
-    currentFrameTime
+    currentFrameTime,
+    confidenceThreshold,
+    onConfidenceThresholdChange
 }) {
     return (
         <div className="toolbar">
@@ -55,51 +55,32 @@ function Toolbar({
             <button onClick={handleSave}>
                 Save
             </button>
-            <div className="boxes-section">
-                <div className="frame-info-card">
-                    <span style={{ fontWeight: 600, fontSize: 15, color: '#007aff' }}>
-                        Current Frame:
-                    </span>
-                    <span style={{ fontWeight: 500, fontSize: 15, marginLeft: 8 }}>
-                        {currentFrameTime}s
-                    </span>
+            <div className="frame-info-card" style={{ marginTop: 18 }}>
+                <span style={{ fontWeight: 600, fontSize: 15, color: '#007aff' }}>
+                    Current Frame:
+                </span>
+                <span style={{ fontWeight: 500, fontSize: 15, marginLeft: 8 }}>
+                    {currentFrameTime}s
+                </span>
+            </div>
+            <div className="track-filter">
+                <div className="track-filter-header">
+                    <span>Track Confidence Filter</span>
+                    <span className="track-filter-value">≥ {confidenceThreshold.toFixed(1)}</span>
                 </div>
-                <h3 style={{ margin: '18px 0 10px 0', fontSize: '16px', fontWeight: 600, color: '#1d1d1f' }}>
-                    Objects
-                </h3>
-                <div className="boxes-list">
-                    {getAllUniqueBoxes().length === 0 ? (
-                        <div className="no-boxes">No objects created yet</div>
-                    ) : (
-                        getAllUniqueBoxes().map(box => {
-                            const isSelected = selectedId === box.id;
-                            const isDisabled = mode !== 'edit';
-                            return (
-                                <div
-                                    key={box.id}
-                                    className={`box-item-card${isSelected ? ' selected' : ''}${isDisabled ? ' disabled' : ''}`}
-                                    onClick={() => {
-                                        if (mode === 'edit') {
-                                            selectBoxFromToolbar(box.id);
-                                        }
-                                    }}
-                                >
-                                    <div className="box-item-title">
-                                        {box.name}
-                                    </div>
-                                    <div className="box-item-lifecycle">
-                                        <span style={{ color: '#86868b' }}>
-                                            {box.startFrame}s
-                                        </span>
-                                        <span style={{ margin: '0 6px', color: '#bdbdbd' }}>→</span>
-                                        <span style={{ color: box.endFrame === null ? '#007aff' : '#86868b' }}>
-                                            {box.endFrame === null ? 'end' : `${box.endFrame}s`}
-                                        </span>
-                                    </div>
-                                </div>
-                            );
-                        })
-                    )}
+                <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.1}
+                    value={confidenceThreshold}
+                    onChange={(event) => onConfidenceThresholdChange(parseFloat(event.target.value))}
+                    aria-label="Track confidence filter"
+                />
+                <div className="track-filter-scale">
+                    <span>0.0</span>
+                    <span>0.5</span>
+                    <span>1.0</span>
                 </div>
             </div>
         </div>
